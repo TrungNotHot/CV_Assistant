@@ -7,7 +7,7 @@ services:
     ports:
       - "5432:5432"
     env_file: 
-      - env
+      - config/.env
     networks:
       - grab_network
 
@@ -22,7 +22,7 @@ services:
       - "9001:9001"
       - "9000:9000"
     env_file:
-      - env
+      - config/.env
     networks:
       - grab_network
 
@@ -31,7 +31,7 @@ services:
     container_name: mc
     hostname: mc
     env_file:
-      - env
+      - config/.env
     entrypoint: >
       /bin/sh -c "  until (/usr/bin/mc config host add minio http://minio:9000 minio minio123)  do echo '...waiting...' && sleep 10; done; /usr/bin/mc mb minio/datalake; / usr/bin/mc policy set public minio/datalake; exit 0; "
     depends_on:
@@ -43,7 +43,7 @@ services:
 # Dagster
   grab_dagster:
     build:
-      context: ./dockerimages/dagster/
+      context: ./docker_images/dagster/
     container_name: grab_dagster
     image: grab_dagster
 
@@ -66,7 +66,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dagster_home:/opt/dagster/dagster_home
     env_file:
-      - env
+      - config/.env
     networks:
       - grab_network
 
@@ -80,7 +80,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dagster_home:/opt/dagster/dagster_home
     env_file:
-      - env
+      - config/.env
     networks:
       - grab_network
   
@@ -94,7 +94,7 @@ services:
   #   volumes:
   #     - ./etl_pipeline:/opt/dagster/app/etl_pipeline
   #   env_file: 
-  #     - env
+  #     - config/.env
   #   ports:
   #     - "4040:4040"
   #   networks:
