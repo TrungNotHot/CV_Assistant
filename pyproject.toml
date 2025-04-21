@@ -1,0 +1,13 @@
+[project]
+name = "cv-assistant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dagster",
+    "dagit",
+    "dagster-postgres",
+    "dagster-dbt",
+    "duckdb"
+]

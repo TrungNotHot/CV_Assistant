@@ -11,6 +11,19 @@ services:
     networks:
       - grab_network
 
+  # grab_duckdb:
+  #   image: datacatering/duckdb:v1.2.2
+  #   container_name: grab_duckdb
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - ./duckdb:/data
+  #   env_file:
+  #     - config/.env
+  #   networks:
+  #     - grab_network
+
+
   minio:
     hostname: minio
     image: minio/minio
