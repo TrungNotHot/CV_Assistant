@@ -1,5 +1,5 @@
 load_from:
   - grpc_server:
-      host: etl_pipeline
+      host: pipeline
       port: 4000
-      location_name: "etl_pipeline"
+      location_name: "pipeline"

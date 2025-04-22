@@ -3,7 +3,7 @@ services:
     image: postgres:15
     container_name: grab_psql
     volumes:
-      - ./postgresql:/var/lib/postgresql/data
+      - ./storage/postgresql:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     env_file: 
@@ -30,7 +30,7 @@ services:
     container_name: minio
     command: ["server", "/data", "--console-address", ":9001"]
     volumes:
-      - ./minio:/data
+      - ./storage/minio:/data
     ports:
       - "9001:9001"
       - "9000:9000"

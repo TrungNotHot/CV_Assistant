@@ -8,6 +8,6 @@ dependencies = [
     "dagster",
     "dagit",
     "dagster-postgres",
-    "dagster-dbt",
-    "duckdb"
+    "polars",
+    "minio"
 ]
