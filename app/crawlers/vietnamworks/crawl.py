@@ -2,7 +2,7 @@ import json
 import time
 import requests
 from bs4 import BeautifulSoup
-from .config import BASE_API_URL, BASE_SITE_URL, HEADERS, JOB_FUNCTION_FILTER, JOB_DESCRIPTION_SELECTOR, HITS_PER_PAGE, REQUEST_DELAY
+from config import BASE_API_URL, BASE_SITE_URL, HEADERS, JOB_FUNCTION_FILTER, JOB_DESCRIPTION_SELECTOR, HITS_PER_PAGE, REQUEST_DELAY
 
 def crawl_jobs_from_api(page):
     payload = {
