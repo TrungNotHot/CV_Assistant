@@ -9,6 +9,7 @@ This project provides a Python-based job crawler that extracts recruitment data 
 ### 1. Python & Virtual Environment
 
 ```bash
+cd data/crawlers/
 python3 -m venv venv
 source venv/bin/activate  # For Windows: venv\Scripts\activate
 ```
@@ -53,6 +54,12 @@ xvfb-run -a python ./src/itviec_crawl.py
 xvfb-run -a python ./src/vietnamwork_crawl.py
 ```
 
+### 3. Crawl Topdev data
+
+```bash
+xvfb-run -a python ./src/topdev_crawl.py
+```
+
 ---
 
 ## 🔁 Resume Crawling from a Specific Page
@@ -95,6 +102,7 @@ crawl-jd/
 ├── src/
 │   ├── itviec_crawl.py
 │   ├── vietnamwork_crawl.py
+│   ├── topdev_crawl.py
 │   └── mongo_config.py
 └── ...
 ```
