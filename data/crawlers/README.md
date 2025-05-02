@@ -63,7 +63,7 @@ xvfb-run -a python ./src/topdev_crawl.py
 ### 4. Crawl LinkedIn data
 
 ```bash
-xvfb-run -a python ./src/linkedin_crawler.py
+xvfb-run -a python ./src/linkedin_crawl.py
 ```
 
 
@@ -110,7 +110,7 @@ crawl-jd/
 │   ├── itviec_crawl.py
 │   ├── vietnamwork_crawl.py
 │   ├── topdev_crawl.py
-│   ├── linkedin_crawler.py
+│   ├── linkedin_crawl.py
 │   └── mongo_config.py
 └── ...
 ```
