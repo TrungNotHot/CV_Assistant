@@ -60,6 +60,13 @@ xvfb-run -a python ./src/vietnamwork_crawl.py
 xvfb-run -a python ./src/topdev_crawl.py
 ```
 
+### 4. Crawl LinkedIn data
+
+```bash
+xvfb-run -a python ./src/linkedin_crawler.py
+```
+
+
 ---
 
 ## 🔁 Resume Crawling from a Specific Page
@@ -103,6 +110,7 @@ crawl-jd/
 │   ├── itviec_crawl.py
 │   ├── vietnamwork_crawl.py
 │   ├── topdev_crawl.py
+│   ├── linkedin_crawler.py
 │   └── mongo_config.py
 └── ...
 ```
