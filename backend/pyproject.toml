@@ -9,5 +9,8 @@ dependencies = [
     "dagit",
     "dagster-postgres",
     "polars",
-    "minio"
+    "minio",
+    "langchain-google-genai",
+    "langchain-core",
+    "pymongo",
 ]
