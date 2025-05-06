@@ -1,135 +1,20 @@
-# import PyPDF2
 import re
 import json
 import copy
 import logging
 import time
 from typing import List, Dict, Any, Optional
-from io import BytesIO
-from config import config
-from .ParserModel import CVParserModel, JDParserModel
+from ParserModel import JDParserModel
 from langchain_google_genai import ChatGoogleGenerativeAI
+from mongo_db_manager import MongoDBManager
 from pymongo import MongoClient, InsertOne, DeleteOne, UpdateOne
-from pymongo.collection import Collection
-
-
-# MongoDB Connection Manager
-class MongoDBManager:
-    _instance = None
-    _client = None
-    
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = MongoDBManager()
-        return cls._instance
-    
-    def __init__(self):
-        if self._client is None:
-            self._client = MongoClient(config.MONGODB_URI)
-            
-    def get_database(self):
-        return self._client[config.MONGODB_DATABASE]
-    
-    def get_collection(self, collection_name):
-        return self.get_database()[collection_name]
-    
-    def close_connection(self):
-        if self._client:
-            self._client.close()
-            self._client = None
-            
-
-# class CVParser():
-#     def __init__(self, model):
-#         self.model = model
-        
-#     def extractInformation(self, cv_raw_text):
-#         cv_extraction_output = self.model.query(cv_text=cv_raw_text)
-#         return cv_extraction_output
-    
-#     def extractJSONFromText(self, text):
-#         # Define JSON pattern
-#         json_pattern = r'\{.*\}'
-        
-#         # Search for JSON string in text
-#         match = re.search(json_pattern, text, re.DOTALL)
-
-#         if match:
-#             json_str = match.group(0)
-#             json_data = json.loads(json_str)
-#             return json_data
-#         else:
-#             return None
-    
-#     def standardizeCVDict(self, cv_dict, remove_duplicates=True):
-#         standardized_cv_dict = copy.deepcopy(cv_dict)
-        
-#         def dictToText(dict_data):
-#             text = '. '.join(f"{key}: {'; '.join(value) if isinstance(value, list) else value}" for key, value in dict_data.items())            
-#             return text
-                
-#         def removeDuplicates(list_data):
-#             unique_list = []
-#             existed_items = set()
-
-#             for item in list_data:
-#                 if item not in existed_items:
-#                     unique_list.append(item)
-#                     existed_items.add(item)
-            
-#             return unique_list
-        
-#         # Standardize each field in the cv dictionary (key (str) and value (str or str list))
-#         for key in standardized_cv_dict:
-#             if isinstance(standardized_cv_dict[key], list):
-#                 for i in range(len(standardized_cv_dict[key])):
-#                     if isinstance(standardized_cv_dict[key][i], dict):
-#                         standardized_cv_dict[key][i] = dictToText(standardized_cv_dict[key][i])
-                        
-#                 if remove_duplicates:
-#                     standardized_cv_dict[key] = removeDuplicates(list_data=standardized_cv_dict[key])
-                    
-#             elif isinstance(standardized_cv_dict[key], dict):
-#                 standardized_cv_dict[key] = dictToText(standardized_cv_dict[key])
-                
-#         return standardized_cv_dict
-    
-#     def parseFromPDF(self, cv_pdf_data, extract_json=True):
-#         # Read raw text from PDF and merge multiple pages into a single string
-#         pages = []
-#         pdf_reader = PyPDF2.PdfReader(BytesIO(cv_pdf_data))
-
-#         for page_num in range(len(pdf_reader.pages)):
-#             page = pdf_reader.pages[page_num]
-#             pages.append(page.extract_text())
-
-#         cv_raw_text = '\n'.join(pages)
-
-#         # Extract cv info as a string
-#         cv_info = self.extractInformation(cv_raw_text=cv_raw_text)
-        
-#         # Extract cv info as a dict
-#         if extract_json:
-#             cv_info = self.extractJSONFromText(text=cv_info)
-        
-#         return cv_info
-    
-#     @staticmethod
-#     def parse_cv(cv_pdf_data):
-#       try:
-#         parser_gpt_model = CVParserGPT(model_name=config.GPT_MODEL_NAME, token=config.GPT_TOKEN, cv_format=config.CV_JSON_FORMAT)
-#         parser = CVParser(model=parser_gpt_model)
-#         cv_info_dict = parser.parseFromPDF(cv_pdf_data)
-#         cv_info_dict = parser.standardizeCVDict(cv_info_dict)
-#         return cv_info_dict
-#       except Exception as e:
-#         raise Exception("Parsing error:" + str(e))
+import backend.pipeline.config as config
 
 class JDParser():
-    def __init__(self, model):
+    def __init__(self, model, mongo_config=None):
         self.model = model
-        self.mongo_manager = MongoDBManager.get_instance()
+        self.mongo_config = mongo_config
+        self.mongo_manager = MongoDBManager.get_instance(mongo_config)
         
     def extractInformation(self, jd_text):
         jd_extraction_output = self.model.query(jd_text=jd_text)
@@ -221,8 +106,8 @@ class JDParser():
     
     def fetch_unparsed_jds_from_mongodb(self, limit=None) -> List[Dict]:
         """Fetch unparsed JDs from MongoDB"""
-        jd_collection = self.mongo_manager.get_collection(config.MONGODB_JD_COLLECTION)
-        parsed_jd_collection = self.mongo_manager.get_collection(config.MONGODB_PARSED_JD_COLLECTION)
+        jd_collection = self.mongo_manager.get_collection(self.mongo_config["MONGODB_JD_COLLECTION"])
+        parsed_jd_collection = self.mongo_manager.get_collection(self.mongo_config["MONGODB_PARSED_JD_COLLECTION"])
         
         # Find all parsed JD IDs
         parsed_ids = [doc['_id'] for doc in parsed_jd_collection.find({}, {'_id': 1})]
@@ -243,11 +128,10 @@ class JDParser():
             logging.error("Mismatch between original and parsed JDs lists")
             return 0
         
-        parsed_jd_collection = self.mongo_manager.get_collection(config.MONGODB_PARSED_JD_COLLECTION)
+        parsed_jd_collection = self.mongo_manager.get_collection(self.mongo_config["MONGODB_PARSED_JD_COLLECTION"])
         operations = []
         saved_count = 0
         
-        import time
         current_time = time.time()
         
         for i, (original_jd, parsed_jd) in enumerate(zip(original_jds, parsed_jds)):
@@ -330,7 +214,7 @@ class JDParser():
         return saved_count
     
     @staticmethod
-    def parse_jd(jd_data):
+    def parse_jd(jd_data, mongo_config=None):
       try:
         parser_gemini_model = JDParserModel(
             model_call=ChatGoogleGenerativeAI,
@@ -338,7 +222,7 @@ class JDParser():
             token=config.GEMINI_TOKEN,
             parse_format=config.JD_JSON_FORMAT
         )
-        parser = JDParser(model=parser_gemini_model)
+        parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
         jd_info_dict = parser.parseFromText(jd_data['full_text_jd'])
         jd_info_dict = parser.standardizeJDDict(jd_info_dict)
         result_data = {
@@ -354,7 +238,7 @@ class JDParser():
         raise Exception("JD parsing error: " + str(e))
     
     @staticmethod
-    def batch_parse_jds_from_mongodb(batch_size=None):
+    def batch_parse_jds_from_mongodb(mongo_config=None, batch_size=None):
         """Parse multiple JDs from MongoDB using LangChain's batch capabilities"""
         try:
             parser_gemini_model = JDParserModel(
@@ -363,7 +247,7 @@ class JDParser():
                 token=config.GEMINI_TOKEN,
                 parse_format=config.JD_JSON_FORMAT
             )
-            parser = JDParser(model=parser_gemini_model)
+            parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
             return parser.process_batch_from_mongodb(batch_size)
         except Exception as e:
             raise Exception(f"Batch JD parsing error: {str(e)}")

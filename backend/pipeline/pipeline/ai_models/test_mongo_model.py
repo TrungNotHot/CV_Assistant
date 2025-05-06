@@ -1,30 +1,38 @@
 import json
 import logging
 import os
-from ai_models.Parser import JDParser, MongoDBManager
+from Parser import JDParser
+from ParserModel import JDParserModel
+from mongo_db_manager import MongoDBManager
 from langchain_google_genai import ChatGoogleGenerativeAI
-from ai_models.ParserModel import JDParserModel
-from config import config
+
+# Create MongoDB configuration dictionary
+mongo_config = {
+    "MONGODB_URI": "mongodb://admin:admin123@localhost:27017/grab_db?authSource=admin",
+    "MONGODB_DATABASE": "cv_assistant",
+    "MONGODB_JD_COLLECTION": "job_descriptions",
+    "MONGODB_PARSED_JD_COLLECTION": "parsed_job_descriptions"
+}
 
 # Cấu hình log để xem thông tin chi tiết
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Đường dẫn dữ liệu test
-test_data_path = os.path.join(os.path.dirname(__file__), "ai_models/test_data.json")
+test_data_path = os.path.join(os.path.dirname(__file__), "../../test/test_data.json")
 
 # Kiểm tra kết nối MongoDB
 try:
-    mongo_manager = MongoDBManager.get_instance()
+    mongo_manager = MongoDBManager.get_instance(mongo_config)
     db = mongo_manager.get_database()
-    logging.info(f"Kết nối MongoDB thành công. Database: {config.MONGODB_DATABASE}")
+    logging.info(f"Kết nối MongoDB thành công. Database: {mongo_config['MONGODB_DATABASE']}")
 except Exception as e:
     logging.error(f"Lỗi kết nối MongoDB: {str(e)}")
 
 # Kiểm tra số lượng tài liệu trong collection
 try:
-    jd_collection = mongo_manager.get_collection(config.MONGODB_JD_COLLECTION)
+    jd_collection = mongo_manager.get_collection(mongo_config["MONGODB_JD_COLLECTION"])
     count = jd_collection.count_documents({})
-    logging.info(f"Số lượng JD trong collection '{config.MONGODB_JD_COLLECTION}': {count}")
+    logging.info(f"Số lượng JD trong collection '{mongo_config['MONGODB_JD_COLLECTION']}': {count}")
     
     if count == 0:
         logging.info("Không có dữ liệu trong collection. Thử thêm dữ liệu mẫu.")
@@ -51,7 +59,7 @@ except Exception as e:
 # Xử lý JDs từ MongoDB
 try:
     logging.info("Bắt đầu xử lý JDs từ MongoDB...")
-    processed_count = JDParser.batch_parse_jds_from_mongodb(batch_size=2)
+    processed_count = JDParser.batch_parse_jds_from_mongodb(mongo_config=mongo_config)
     print(f"Đã xử lý thành công {processed_count} mô tả công việc")
 except Exception as e:
     logging.error(f"Lỗi khi xử lý JDs: {str(e)}")
@@ -71,7 +79,7 @@ except Exception as e:
                     parse_format=config.JD_JSON_FORMAT
                 )
                 
-                parser = JDParser(model=parser_gemini_model)
+                parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
                 jd_info_dict = parser.parseFromText(test_data[0]['full_text_jd'])
                 jd_info_dict = parser.standardizeJDDict(jd_info_dict)
                 print("Xử lý trực tiếp dữ liệu mẫu thành công. Kết quả:")

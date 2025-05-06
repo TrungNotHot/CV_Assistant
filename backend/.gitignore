@@ -1,4 +1,5 @@
 storage/postgresql/*
-config/*
 test
 .venv
+.env
+storage/mongodb
