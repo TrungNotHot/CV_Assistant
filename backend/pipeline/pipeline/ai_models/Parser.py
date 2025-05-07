@@ -22,7 +22,7 @@ class JDParser():
     
     def batch_extract_information(self, jd_texts_list: List[str]) -> List[str]:
         """Extract information from multiple JDs in batch using LangChain's batch capability"""
-        return self.model.batch_query(texts_list=jd_texts_list, batch_size=config.BATCH_SIZE)
+        return self.model.batch_query(texts_list=jd_texts_list)
     
     def extractJSONFromText(self, text):
         # Define JSON pattern
