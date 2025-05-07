@@ -26,8 +26,7 @@ def run_jd_parser(context) -> Output[dict]:
     """Asset that runs the test_mongo_model.py script directly"""
     context.log.info("Starting to run the MongoDB job description parser script")
     
-    # Path to the test_mongo_model.py script
-    script_path = Path(__file__).resolve().parent.parent / "ai_models" / "test_mongo_model.py"
+    script_path = Path(__file__).resolve().parent.parent / "ai_models" / "parse_to_mongo.py"
     
     if not script_path.exists():
         error_msg = f"Script file not found at {script_path}"

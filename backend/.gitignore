@@ -2,4 +2,9 @@ storage/postgresql/*
 test
 .venv
 .env
-storage/mongodb
+storage/minio/*
+storage/mongodb/*
+storage/postgresql/*
+dagster_home/*
+!dagster_home/dagster.yaml
+!dagster_home/workspace.yaml
