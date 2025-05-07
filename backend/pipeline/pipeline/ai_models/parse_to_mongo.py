@@ -23,52 +23,56 @@ mongo_config = {
     "MONGODB_JD_COLLECTION": os.getenv("MONGODB_JD_COLLECTION"),
     "MONGODB_PARSED_JD_COLLECTION": os.getenv("MONGODB_PARSED_JD_COLLECTION")
 }
- 
-# Cấu hình log để xem thông tin chi tiết
+# Configure logging to view detailed information
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Test data path
+test_data_path = os.path.join("/home/trungnothot/Study/CV_Assistant/backend/test/job_descriptions_limited.json")
 
-# Đường dẫn dữ liệu test
-test_data_path = os.path.join("/home/trungnothot/Study/CV_Assistant/backend/test/test_data.json")
 
-# Kiểm tra kết nối MongoDB
+
+# Check MongoDB connection
 try:
     mongo_manager = MongoDBManager.get_instance(mongo_config)
     db = mongo_manager.get_database()
-    logging.info(f"Kết nối MongoDB thành công. Database: {mongo_config['MONGODB_DATABASE']}")
+    logging.info(f"MongoDB connection successful. Database: {mongo_config['MONGODB_DATABASE']}")
 except Exception as e:
-    logging.error(f"Lỗi kết nối MongoDB: {str(e)}")
+    logging.error(f"MongoDB connection error: {str(e)}")
 
-# Kiểm tra số lượng tài liệu trong collection
+# Check document count in collection
 try:
     jd_collection = mongo_manager.get_collection(mongo_config["MONGODB_JD_COLLECTION"])
     count = jd_collection.count_documents({})
-    logging.info(f"Số lượng JD trong collection '{mongo_config['MONGODB_JD_COLLECTION']}': {count}")
+    logging.info(f"Number of JDs in collection '{mongo_config['MONGODB_JD_COLLECTION']}': {count}")
     
     if count == 0:
-        logging.info("Không có dữ liệu trong collection. Thử thêm dữ liệu mẫu.")
+        logging.info("No data in collection. Trying to add sample data.")
         
-        # Đọc và thêm dữ liệu mẫu vào MongoDB nếu không có dữ liệu
+        # Read and add sample data to MongoDB if no data exists
         if os.path.exists(test_data_path):
             with open(test_data_path, 'r') as f:
                 test_data = json.load(f)
                 
-            # Thêm _id cho mỗi bản ghi nếu chưa có
+            # Keep the existing _id if available or generate a new one
             for i, item in enumerate(test_data):
                 if '_id' not in item:
+                    # Generate a new ID if none exists
                     item['_id'] = f"test_jd_{i}"
+                else:
+                    # Ensure _id is in the correct format if it already exists
+                    item['_id'] = str(item['_id']["$oid"])
             
-            # Thêm vào MongoDB
+            # Add to MongoDB
             try:
                 result = jd_collection.insert_many(test_data)
-                logging.info(f"Đã thêm {len(result.inserted_ids)} bản ghi mẫu vào MongoDB")
+                logging.info(f"Added {len(result.inserted_ids)} sample records to MongoDB")
             except Exception as e:
-                logging.error(f"Lỗi khi thêm dữ liệu mẫu: {str(e)}")
+                logging.error(f"Error adding sample data: {str(e)}")
 except Exception as e:
-    logging.error(f"Lỗi khi kiểm tra collection: {str(e)}")
+    logging.error(f"Error checking collection: {str(e)}")
 
-# Xử lý tất cả các JDs từ MongoDB theo batch
+# Process all JDs from MongoDB in batches
 try:
-    # Lấy số lượng JD chưa xử lý
+    # Get count of unprocessed JDs
     parser_gemini_model = JDParserModel(
         model_call=ChatGoogleGenerativeAI,
         model_name=config["GEMINI_MODEL_NAME"],
@@ -77,38 +81,39 @@ try:
     )
     parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
     
-    # Lấy danh sách các JD chưa được parse
+    # Get list of unparsed JDs
     unparsed_jds = parser.fetch_unparsed_jds_from_mongodb()
     total_jds = len(unparsed_jds)
     
     if total_jds == 0:
-        logging.info("Không có JD nào cần xử lý")
+        logging.info("No JDs need processing")
     else:
         batch_size = config["BATCH_SIZE"]
-        logging.info(f"Tìm thấy {total_jds} JD cần xử lý, với batch_size = {batch_size}")
+        logging.info(f"Found {total_jds} JDs to process, with batch_size = {batch_size}")
         
-        # Tính số lượng batch
-        num_batches = (total_jds + batch_size - 1) // batch_size  # Làm tròn lên
+        # Calculate number of batches
+        # num_batches = (total_jds + batch_size - 1) // batch_size  # Round up
+        num_batches=1
         
-        # Xử lý theo từng batch
+        # Process by batch
         total_processed = 0
         for batch_num in range(num_batches):
-            logging.info(f"Đang xử lý batch {batch_num + 1}/{num_batches}...")
+            logging.info(f"Processing batch {batch_num + 1}/{num_batches}...")
             try:
-                processed_count = JDParser.batch_parse_jds_from_mongodb(mongo_config=mongo_config, batch_size=batch_size)
+                processed_count = JDParser.batch_parse_jds_from_mongodb(mongo_config=mongo_config, batch_size=batch_size, config=config)
                 total_processed += processed_count
-                logging.info(f"Đã xử lý {processed_count} JD trong batch {batch_num + 1}. Tổng số đã xử lý: {total_processed}/{total_jds}")
+                logging.info(f"Processed {processed_count} JDs in batch {batch_num + 1}. Total processed: {total_processed}/{total_jds}")
             except Exception as batch_e:
-                logging.error(f"Lỗi khi xử lý batch {batch_num + 1}: {str(batch_e)}")
+                logging.error(f"Error processing batch {batch_num + 1}: {str(batch_e)}")
         
-        logging.info(f"Hoàn thành! Đã xử lý tổng cộng {total_processed} JD")
+        logging.info(f"Completed! Processed a total of {total_processed} JDs")
         
 except Exception as e:
-    logging.error(f"Lỗi khi xử lý JDs: {str(e)}")
+    logging.error(f"Error processing JDs: {str(e)}")
     
-    # Nếu xử lý từ MongoDB thất bại, thử xử lý dữ liệu mẫu trực tiếp
+    # If processing from MongoDB fails, try processing sample data directly
     try:
-        logging.info("Thử xử lý dữ liệu mẫu trực tiếp...")
+        logging.info("Trying to process sample data directly...")
         if os.path.exists(test_data_path):
             with open(test_data_path, 'r') as f:
                 test_data = json.load(f)
@@ -124,7 +129,7 @@ except Exception as e:
                 parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
                 jd_info_dict = parser.parseFromText(test_data[0]['full_text_jd'])
                 jd_info_dict = parser.standardizeJDDict(jd_info_dict)
-                print("Xử lý trực tiếp dữ liệu mẫu thành công. Kết quả:")
+                print("Successfully processed sample data directly. Result:")
                 print(json.dumps(jd_info_dict, indent=2))
     except Exception as inner_e:
-        logging.error(f"Lỗi khi xử lý dữ liệu mẫu trực tiếp: {str(inner_e)}")
+        logging.error(f"Error processing sample data directly: {str(inner_e)}")

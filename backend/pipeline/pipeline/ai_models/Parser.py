@@ -8,7 +8,6 @@ from ParserModel import JDParserModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from mongo_db_manager import MongoDBManager
 from pymongo import MongoClient, InsertOne, DeleteOne, UpdateOne
-import backend.pipeline.config as config
 
 class JDParser():
     def __init__(self, model, mongo_config=None):
@@ -188,10 +187,12 @@ class JDParser():
         
         return 0
     
-    def process_batch_from_mongodb(self, batch_size=None):
+    def process_batch_from_mongodb(self, batch_size=None, config=None):
         """Fetch, parse, and save a batch of JDs from MongoDB with improved efficiency"""
-        if batch_size is None:
-            batch_size = config.BATCH_SIZE
+        if batch_size is None and config and "BATCH_SIZE" in config:
+            batch_size = config["BATCH_SIZE"]
+        elif batch_size is None:
+            batch_size = 10  # Default batch size if not provided
         
         # Fetch unparsed JDs
         unparsed_jds = self.fetch_unparsed_jds_from_mongodb(limit=batch_size)
@@ -214,13 +215,13 @@ class JDParser():
         return saved_count
     
     @staticmethod
-    def parse_jd(jd_data, mongo_config=None):
+    def parse_jd(jd_data, mongo_config=None, config=None):
       try:
         parser_gemini_model = JDParserModel(
             model_call=ChatGoogleGenerativeAI,
-            model_name=config.GEMINI_MODEL_NAME,
-            token=config.GEMINI_TOKEN,
-            parse_format=config.JD_JSON_FORMAT
+            model_name=config["GEMINI_MODEL_NAME"] if config else None,
+            token=config["GEMINI_TOKEN"] if config else None,
+            parse_format=config["JD_JSON_FORMAT"] if config else None
         )
         parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
         jd_info_dict = parser.parseFromText(jd_data['full_text_jd'])
@@ -238,16 +239,16 @@ class JDParser():
         raise Exception("JD parsing error: " + str(e))
     
     @staticmethod
-    def batch_parse_jds_from_mongodb(mongo_config=None, batch_size=None):
+    def batch_parse_jds_from_mongodb(mongo_config=None, batch_size=None, config=None):
         """Parse multiple JDs from MongoDB using LangChain's batch capabilities"""
         try:
             parser_gemini_model = JDParserModel(
                 model_call=ChatGoogleGenerativeAI,
-                model_name=config.GEMINI_MODEL_NAME,
-                token=config.GEMINI_TOKEN,
-                parse_format=config.JD_JSON_FORMAT
+                model_name=config["GEMINI_MODEL_NAME"] if config else None,
+                token=config["GEMINI_TOKEN"] if config else None,
+                parse_format=config["JD_JSON_FORMAT"] if config else None
             )
             parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
-            return parser.process_batch_from_mongodb(batch_size)
+            return parser.process_batch_from_mongodb(batch_size, config)
         except Exception as e:
             raise Exception(f"Batch JD parsing error: {str(e)}")
