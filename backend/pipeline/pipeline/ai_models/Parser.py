@@ -4,9 +4,9 @@ import copy
 import logging
 import time
 from typing import List, Dict, Any, Optional
-from ParserModel import JDParserModel
+from .ParserModel import JDParserModel
 from langchain_google_genai import ChatGoogleGenerativeAI
-from mongo_db_manager import MongoDBManager
+from .mongo_db_manager import MongoDBManager
 from pymongo import MongoClient, InsertOne, DeleteOne, UpdateOne
 
 class JDParser():

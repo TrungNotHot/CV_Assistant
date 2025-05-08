@@ -10,13 +10,11 @@ RUN apt-get update --yes && \
     curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/dagster/app
+WORKDIR /opt/dagster/app/pipeline
 
 # Add repository code
-COPY requirements.txt /opt/dagster/app
+COPY requirements.txt /opt/dagster/app/pipeline
 # Use pip for installation
 RUN pip install --upgrade pip && pip install -r requirements.txt
-
-WORKDIR /opt/dagster/app
 COPY . /opt/dagster/app/pipeline
 CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "pipeline"]
