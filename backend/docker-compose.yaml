@@ -1,4 +1,20 @@
 services:
+  # MongoDB
+  grab_mongo:
+    image: mongo:6.0
+    container_name: grab_mongo
+    volumes:
+      - ./storage/mongodb:/data/db
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: grab_db
+    networks:
+      - grab_network
+
+  # PostgreSQL
   grab_psql:
     image: postgres:15
     container_name: grab_psql
@@ -7,23 +23,11 @@ services:
     ports:
       - "5432:5432"
     env_file: 
-      - config/.env
+      - .env
     networks:
       - grab_network
 
-  # grab_duckdb:
-  #   image: datacatering/duckdb:v1.2.2
-  #   container_name: grab_duckdb
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - ./duckdb:/data
-  #   env_file:
-  #     - config/.env
-  #   networks:
-  #     - grab_network
-
-
+  # MinIO
   minio:
     hostname: minio
     image: minio/minio
@@ -35,7 +39,7 @@ services:
       - "9001:9001"
       - "9000:9000"
     env_file:
-      - config/.env
+      - .env
     networks:
       - grab_network
 
@@ -44,13 +48,25 @@ services:
     container_name: mc
     hostname: mc
     env_file:
-      - config/.env
+      - .env
     entrypoint: >
       /bin/sh -c "  until (/usr/bin/mc config host add minio http://minio:9000 minio minio123)  do echo '...waiting...' && sleep 10; done; /usr/bin/mc mb minio/datalake; / usr/bin/mc policy set public minio/datalake; exit 0; "
     depends_on:
       - minio
     networks:
       - grab_network
+
+  # grab_duckdb:
+  #   image: datacatering/duckdb:v1.2.2
+  #   container_name: grab_duckdb
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - ./duckdb:/data
+  #   env_file:
+  #     - .env
+  #   networks:
+  #     - grab_network
       
 
 # Dagster
@@ -79,7 +95,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dagster_home:/opt/dagster/dagster_home
     env_file:
-      - config/.env
+      - .env
     networks:
       - grab_network
 
@@ -93,25 +109,25 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dagster_home:/opt/dagster/dagster_home
     env_file:
-      - config/.env
+      - .env
     networks:
       - grab_network
   
-  # # etl
-  # etl_pipeline:
-  #   build:
-  #     context: ./etl_pipeline
-  #     dockerfile: Dockerfile
-  #   image: etl_pipeline:latest
-  #   container_name: etl_pipeline
-  #   volumes:
-  #     - ./etl_pipeline:/opt/dagster/app/etl_pipeline
-  #   env_file: 
-  #     - config/.env
-  #   ports:
-  #     - "4040:4040"
-  #   networks:
-  #     - grab_network
+  # etl
+  pipeline:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    image: pipeline:latest
+    container_name: pipeline
+    volumes:
+      - ./pipeline:/opt/dagster/app/pipeline
+    env_file: 
+      - .env
+    ports:
+      - "4040:4040"
+    networks:
+      - grab_network
 
 networks:
   grab_network:
