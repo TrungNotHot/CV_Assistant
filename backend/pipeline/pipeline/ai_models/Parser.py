@@ -2,12 +2,12 @@ import re
 import json
 import copy
 import logging
-import time
 from typing import List, Dict, Any, Optional
 from .ParserModel import JDParserModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from .mongo_db_manager import MongoDBManager
 from pymongo import MongoClient, InsertOne, DeleteOne, UpdateOne
+from datetime import datetime
 
 class JDParser():
     def __init__(self, model, mongo_config=None):
@@ -131,7 +131,7 @@ class JDParser():
         operations = []
         saved_count = 0
         
-        current_time = time.time()
+        current_time = datetime.now().isoformat(timespec='milliseconds')
         
         for i, (original_jd, parsed_jd) in enumerate(zip(original_jds, parsed_jds)):
             if parsed_jd is None:
@@ -145,9 +145,9 @@ class JDParser():
                 "location": original_jd.get("location", ""),
                 "posted_date": original_jd.get("posted_date", ""),
                 "url": original_jd.get("url", ""),
-                "parsed_data": parsed_jd,
-                "parse_timestamp": current_time
+                "update_date": current_time
             }
+            document.update(parsed_jd)
             
             # Sử dụng InsertOne thay vì định dạng dictionary
             operations.append(InsertOne(document))
@@ -174,7 +174,7 @@ class JDParser():
                         "posted_date": original_jd.get("posted_date", ""),
                         "url": original_jd.get("url", ""),
                         "parsed_data": parsed_jd,
-                        "parse_timestamp": current_time
+                        "update_date": current_time
                     }
                     
                     try:
@@ -223,7 +223,9 @@ class JDParser():
             token=config["GEMINI_TOKEN"] if config else None,
             parse_format=config["JD_JSON_FORMAT"] if config else None
         )
+
         parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
+
         jd_info_dict = parser.parseFromText(jd_data['full_text_jd'])
         jd_info_dict = parser.standardizeJDDict(jd_info_dict)
         result_data = {
