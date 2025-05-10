@@ -1,11 +1,10 @@
 from dagster import asset, AssetExecutionContext
-import json
 
 @asset(
     name="parse_jds_to_mongodb",
     description="Asset that parses JD data and saves it to MongoDB",
     required_resource_keys={"mongo_db_manager", "jd_parser", "mongo_config", "config", "processed_count"},
-    compute_kind="python",
+    compute_kind="Python",
     group_name="parser"
 )
 def parse_jds_to_mongodb(context: AssetExecutionContext):
@@ -66,8 +65,6 @@ def parse_jds_to_mongodb(context: AssetExecutionContext):
             return {"status": "success", "processed": total_processed}
     except Exception as e:
         context.log.error(f"Error processing JDs: {str(e)}")
-            
-
     finally:
         # Close MongoDB connection
         mongo_manager.close_connection()

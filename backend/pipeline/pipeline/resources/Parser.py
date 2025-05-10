@@ -156,7 +156,7 @@ class JDParser():
         if operations:
             try:
                 result = parsed_jd_collection.bulk_write(operations)
-                logging.info(f"Đã lưu {result.inserted_count} bản ghi vào MongoDB")
+                logging.info(f"Saved {result.inserted_count} datapoints to MongoDB")
                 return saved_count
             except Exception as e:
                 logging.error(f"Error in bulk write to MongoDB: {str(e)}")
