@@ -3,6 +3,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
 from typing import List, Dict, Any, Optional
 import logging
+import json
+import os
 
 
 class BaseParserModel(ABC):
@@ -37,22 +39,60 @@ class BaseParserModel(ABC):
 
 class JDParserModel(BaseParserModel):
     def initialize_model(self, model_call, model_name, token):
+        # Load reference data for better prompting
+        self.reference_data = self._load_reference_data()
+        
         # For Gemini model, if anothor model, parameter inside may be different
         return model_call(
             model=model_name,
             google_api_key=token
         )
     
-    def query(self, jd_text):
-        # Construct the extraction message
-        jd_extraction_msg = (
-            f'"{jd_text}"\n---\nExtract information in English from JD into the following JSON format with utf-8 encoding:\n'
-            f'{self.parse_format}'
+    def _load_reference_data(self) -> Dict[str, List[str]]:
+        """Load reference data for standardized extraction"""
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            reference_path = os.path.join(current_dir, "reference.json")
+            
+            with open(reference_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error loading reference data: {str(e)}")
+            return {
+                "soft_skills": [],
+                "seniority_level": [],
+                "major": []
+            }
+    
+    def _create_enhanced_prompt(self, jd_text: str) -> str:
+        """Create an enhanced prompt using reference data"""
+        # Create soft skills list for context
+        soft_skills_str = ", ".join(self.reference_data.get("soft_skills", []))
+        # Create seniority levels list for context
+        seniority_str = ", ".join(self.reference_data.get("seniority_level", []))
+        # Create major list for context
+        major_str = ", ".join(self.reference_data.get("major", []))
+        
+        # Construct the enhanced extraction message
+        return (
+            f'"{jd_text}"\n\n---\n\n'
+            f'Extract information in English from the job description above into the following JSON format with utf-8 encoding:\n'
+            f'{self.parse_format}\n\n'
+            f'Please ensure you:\n'
+            f'1. Standardize soft skills from this list when possible: {soft_skills_str}\n'
+            f'2. Map the seniority level to one/many of these values: {seniority_str}\n'
+            f'3. Map the major to one/many of these values: {major_str}\n'
+            f'4 Extract all technology stacks (tech_stack) mentioned in the text. Normalize each to its original name. '
+            "For example: 'reactjs' → 'React', 'nodejs' → 'Node.js', 'postgres' → 'PostgreSQL'"
         )
+    
+    def query(self, jd_text):
+        # Construct the enhanced extraction message
+        jd_extraction_msg = self._create_enhanced_prompt(jd_text)
         
         # Create messages for LangChain
         messages = [
-            SystemMessage(content="You are a job description extractor to extract job information into a corresponding format."),
+            SystemMessage(content="You are a job description analyzer specialized in extracting structured information from job postings. Follow the requested JSON format exactly."),
             HumanMessage(content=jd_extraction_msg)
         ]
         
@@ -65,15 +105,12 @@ class JDParserModel(BaseParserModel):
     def batch_query(self, texts_list: List[str], batch_size: int = 10) -> List[str]:
         """Process multiple JD texts in batches using LangChain's batch capability"""
         # Create system message once to reuse
-        system_message = SystemMessage(content="You are a job description extractor to extract job information into a corresponding format.")
+        system_message = SystemMessage(content="You are a job description analyzer specialized in extracting structured information from job postings. Follow the requested JSON format exactly.")
         
         # Prepare all inputs
         all_messages = []
         for jd_text in texts_list:
-            jd_extraction_msg = (
-                f'"{jd_text}"\n---\nExtract information in English from JD into the following JSON format with utf-8 encoding:\n'
-                f'{self.parse_format}'
-            )
+            jd_extraction_msg = self._create_enhanced_prompt(jd_text)
             all_messages.append([
                 system_message,
                 HumanMessage(content=jd_extraction_msg)
