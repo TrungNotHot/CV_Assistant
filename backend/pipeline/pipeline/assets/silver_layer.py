@@ -190,7 +190,7 @@ class ReferenceNormalizer:
             best_match, score = process.extractOne(
                 processed_value, 
                 list(self.processed_mapping.keys()), 
-                scorer=fuzz.token_sort_ratio
+                scorer=fuzz.token_set_ratio
             )
             
             if score >= self.threshold:
