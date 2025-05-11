@@ -131,7 +131,7 @@ class JDParser():
         operations = []
         saved_count = 0
         
-        current_time = datetime.now().isoformat(timespec='milliseconds')
+        current_time = datetime.now().strftime("%Y-%m-%d")
         
         for i, (original_jd, parsed_jd) in enumerate(zip(original_jds, parsed_jds)):
             if parsed_jd is None:

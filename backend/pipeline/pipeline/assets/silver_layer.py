@@ -1,14 +1,32 @@
 import os
 import json
-import polars as pl
 import re
-from dagster import asset
+import polars as pl
+from dagster import asset, Output, StaticPartitionsDefinition, AssetIn
+from functools import lru_cache
+import time
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
-# Path to the reference file
 REFERENCE_FILE_PATH = os.path.join(os.path.dirname(__file__), "../resources/reference.json")
+def generate_monthly_partitions():
+    start_date = datetime.strptime("2025-01-01", "%Y-%m-%d")
+    end_date = (datetime.now() + relativedelta(months=1)).replace(day=1)
+    partitions = []
+    current = start_date
+    
+    while current <= end_date:
+        partitions.append(current.strftime("%Y-%m-%d"))
+        current = (current + relativedelta(months=1)).replace(day=1)
+    
+    return partitions
+MONTHLY = StaticPartitionsDefinition(generate_monthly_partitions())
 
+
+# UDF
+@lru_cache(maxsize=1)
 def load_reference_data():
-    """Load reference data from JSON file."""
+    """Load reference data from JSON file with caching for better performance."""
     try:
         with open(REFERENCE_FILE_PATH, 'r') as f:
             reference_data = json.load(f)
@@ -28,183 +46,467 @@ def save_reference_data(reference_data):
         with open(REFERENCE_FILE_PATH, 'w') as f:
             json.dump(reference_data, f, indent=2)
         print("Reference data updated successfully")
+        load_reference_data.cache_clear()
     except Exception as e:
         print(f"Error saving reference data: {e}")
 
-def normalize_value(value, reference_list, threshold=80):
-    """
-    Normalize a value using fuzzy matching against reference list.
-    """
-    if not value or not isinstance(value, str):
-        return None, False
+def preprocess_text(text):
+    if not text or not isinstance(text, str):
+        return ""
+    # Convert to lowercase and remove special characters
+    return re.sub(r'[^\w\s]', '', text.lower()).strip()
+
+def create_normalize_location_udf(normalizer):
+    """Create a UDF for location normalization that can be used with Polars"""
+    def normalize_location(loc):
+        # Handle null/None values
+        if loc is None:
+            return None
+            
+        # Ensure we're working with strings
+        if not isinstance(loc, str):
+            try:
+                loc = str(loc).strip()
+            except:
+                return None
+                
+        if not loc:
+            return None
+            
+        norm_loc, _ = normalizer.normalize(loc)
+        return norm_loc
+    return normalize_location
+
+def create_normalize_list_udf(normalizer):
+    """Create a UDF for list normalization (skills, majors, tech_stack) that can be used with Polars"""
+    def normalize_list(items):
+        # Handle null/None values
+        if items is None:
+            return []
+            
+        # If we get a string instead of a list, try to parse it as a list
+        if isinstance(items, str):
+            try:
+                # Check if it's a string representation of a list
+                if items.strip().startswith('[') and items.strip().endswith(']'):
+                    import json
+                    items = json.loads(items)
+                else:
+                    # Single item
+                    items = [items]
+            except:
+                return []
+                
+        # Ensure it's a list
+        if not isinstance(items, list):
+            try:
+                items = list(items)
+            except:
+                return []
         
-    # Clean the value
-    value = value.strip()
-    if not value:
-        return None, False
+        normalized_items = []
+        for item in items:
+            # Skip None or empty items
+            if not item:
+                continue
+                
+            # Ensure item is a string
+            if not isinstance(item, str):
+                try:
+                    item = str(item).strip()
+                except:
+                    continue
+                    
+            if not item:
+                continue
+                
+            norm_item, _ = normalizer.normalize(item)
+            if norm_item:
+                normalized_items.append(norm_item)
+        return normalized_items
+    return normalize_list
+
+
+class ReferenceNormalizer:
+    """Class to handle normalization with efficient preprocessing and caching"""
+    
+    def __init__(self, category, threshold=50):
+        """Initialize normalizer for a specific category (location, major, soft_skills, tech_stack)"""
+        self.category = category
+        self.threshold = threshold
+        self.reference_data = None
+        self.processed_mapping = None
+        self.new_values = set()
+        self.cache = {}  # Simple in-memory cache for normalized values
+        self.load_data()
+    
+    def load_data(self):
+        """Load and preprocess reference data"""
+        all_data = load_reference_data()
+        self.reference_data = all_data.get(self.category, [])
+        # Create mapping once during initialization
+        self.processed_mapping = {preprocess_text(ref): ref for ref in self.reference_data}
+    
+    def normalize(self, value):
+        """Normalize a single value using efficient processing"""
+        if not value or not isinstance(value, str):
+            return None, False
+            
+        value = value.strip()
+        if not value:
+            return None, False
+            
+        # Check cache first for exact matches
+        if value in self.cache:
+            return self.cache[value], False
+            
+        # If exact match exists in original data
+        if value in self.reference_data:
+            self.cache[value] = value
+            return value, False
+            
+        # Preprocess the value
+        processed_value = preprocess_text(value)
         
-    # If exact match exists, return it
-    if value in reference_list:
-        return value, False
-    
-    # Preprocess text for comparison
-    def preprocess_text(text):
-        if not text:
-            return ""
-        return re.sub(r'[^\w\s]', '', text.lower())
-    
-    processed_value = preprocess_text(value)
-    processed_to_original = {preprocess_text(ref): ref for ref in reference_list}
-    
-    if processed_value in processed_to_original:
-        return processed_to_original[processed_value], False
+        # Check for preprocessed exact matches
+        if processed_value in self.processed_mapping:
+            normalized = self.processed_mapping[processed_value]
+            self.cache[value] = normalized
+            return normalized, False
         
-    if reference_list:
+        # Use fuzzy matching only when necessary
         try:
             from fuzzywuzzy import fuzz, process
             
-            processed_refs = list(processed_to_original.keys())
-            best_match, score = process.extractOne(processed_value, processed_refs, scorer=fuzz.token_sort_ratio)
+            # Find best match using preprocessed values for efficiency
+            best_match, score = process.extractOne(
+                processed_value, 
+                list(self.processed_mapping.keys()), 
+                scorer=fuzz.token_sort_ratio
+            )
             
-            if score >= threshold:
-                return processed_to_original[best_match], False
+            if score >= self.threshold:
+                normalized = self.processed_mapping[best_match]
+                self.cache[value] = normalized
+                return normalized, False
         except ImportError:
-            for proc_ref, orig_ref in processed_to_original.items():
-                if processed_value == proc_ref:
-                    return orig_ref, False
+            pass
             
-    return value, True
-
-@asset
-def normalize_soft_skills(bronze_jobs_df):
-    """Asset to normalize soft skills in job descriptions."""
-    reference_data = load_reference_data()
-    reference_soft_skills = reference_data["soft_skills"]
+        # If no good match, mark as new
+        self.new_values.add(value)
+        self.cache[value] = value
+        return value, True
     
-    # Convert pandas DataFrame to polars if needed
-    if not isinstance(bronze_jobs_df, pl.DataFrame):
-        df = pl.from_pandas(bronze_jobs_df)
-    else:
-        df = bronze_jobs_df.clone()
+    def update_reference_if_needed(self):
+        """Update reference data if new values were found"""
+        if not self.new_values:
+            return False
+            
+        # Add new values to reference data
+        reference_data = load_reference_data()
+        category_data = set(reference_data.get(self.category, []))
+        category_data.update(self.new_values)
+        reference_data[self.category] = sorted(list(category_data))
         
-    if "skills" not in df.columns:
-        return df
-    
-    new_soft_skills = set()
-    
-    def normalize_skills(skills_list):
-        if not isinstance(skills_list, list):
-            return []
-            
-        normalized_skills = []
-        for skill in skills_list:
-            norm_skill, is_new = normalize_value(skill, reference_soft_skills)
-            if norm_skill:
-                normalized_skills.append(norm_skill)
-                if is_new:
-                    new_soft_skills.add(norm_skill)
-        return normalized_skills
-    
-    # Apply normalization with polars
-    df = df.with_columns(
-        pl.col("skills").map_elements(normalize_skills).alias("normalized_skills")
-    )
-    
-    # Update reference data if new soft skills were found
-    if new_soft_skills:
-        reference_data["soft_skills"] = sorted(list(set(reference_soft_skills) | new_soft_skills))
+        # Save updated reference data
         save_reference_data(reference_data)
         
-    return df
+        # Reset for next batch
+        self.new_values = set()
+        self.load_data()  # Reload data with new values
+        return True
 
-@asset
-def normalize_location(bronze_jobs_df):
-    """Asset to normalize location in job descriptions."""
-    reference_data = load_reference_data()
-    reference_locations = reference_data["location"]
+
+@asset(
+    name="silver_normalized_location",
+    description="Normalize location data from bronze layer",
+    io_manager_key="minio_io_manager",
+    key_prefix=["silver", "cv_assistant"],
+    compute_kind="Normalization",
+    group_name="silver",
+    partitions_def=MONTHLY,
+    ins={
+        "bronze_job_descriptions": AssetIn(key=["bronze", "cv_assistant", "bronze_job_descriptions"]),
+    },
+)
+def normalize_location(context, bronze_job_descriptions):
+    """
+    Asset to normalize location in job descriptions with improved performance using Polars.
+    Location data is expected to be a string.
+    """
+    normalizer = ReferenceNormalizer('location')
     
-    # Convert pandas DataFrame to polars if needed
-    if not isinstance(bronze_jobs_df, pl.DataFrame):
-        df = pl.from_pandas(bronze_jobs_df)
-    else:
-        df = bronze_jobs_df.clone()
-        
+    # Use Polars DataFrame directly
+    df = bronze_job_descriptions
+    
     if "location" not in df.columns:
-        return df
+        context.log.warning("Location column not found in input data")
+        return Output(
+            df, 
+            metadata={
+                "normalized_field": "location",
+                "row_count": df.shape[0],
+                "partition": context.asset_partition_key_for_output(),
+                "status": "no_location_column"
+            }
+        )
     
-    new_locations = set()
+    # Create a Python UDF for normalization
+    normalize_loc_udf = create_normalize_location_udf(normalizer)
     
-    def process_location(loc):
-        if not loc:
-            return None
-        norm_loc, is_new = normalize_value(loc, reference_locations)
-        if is_new and norm_loc:
-            new_locations.add(norm_loc)
-        return norm_loc
-        
-    df = df.with_columns(
-        pl.col("location").map_elements(process_location).alias("normalized_location")
+    # Use Polars apply to process the column
+    df_with_norm = df.with_columns(
+        pl.col("location").map_elements(normalize_loc_udf).alias("location")
+    )
+    df_with_norm.drop("location")
+    
+    # Update reference data with any new values found
+    updated = normalizer.update_reference_if_needed()
+    
+    return Output(
+        df_with_norm,
+        metadata={
+            "normalized_field": "location",
+            "row_count": df.shape[0],
+            "reference_updated": updated,
+            "partition": context.asset_partition_key_for_output(),
+            "status": "success"
+        }
+    )
+
+
+@asset(
+    name="silver_normalized_major",
+    description="Normalize major data from bronze layer",
+    io_manager_key="minio_io_manager",
+    key_prefix=["silver", "cv_assistant"],
+    compute_kind="Normalization",
+    group_name="silver",
+    partitions_def=MONTHLY,
+    ins={
+        "bronze_job_descriptions": AssetIn(key=["bronze", "cv_assistant", "bronze_job_descriptions"]),
+    },
+)
+def normalize_major(context, bronze_job_descriptions):
+    """
+    Asset to normalize major in job descriptions with improved performance using Polars.
+    Major data is expected to be a list of strings.
+    """
+    normalizer = ReferenceNormalizer('major')
+    
+    # Use Polars DataFrame directly
+    df = bronze_job_descriptions
+    
+    if "major" not in df.columns:
+        context.log.warning("Required majors column not found in input data")
+        return Output(
+            df,
+            metadata={
+                "normalized_field": "major",
+                "row_count": df.shape[0],
+                "partition": context.asset_partition_key_for_output(),
+                "status": "no_majors_column"
+            }
+        )
+    
+    # Create a Python UDF for normalization
+    normalize_majors_udf = create_normalize_list_udf(normalizer)
+    
+    # Use Polars apply to process the column
+    df_with_norm = df.with_columns(
+        pl.col("major").map_elements(normalize_majors_udf).alias("major")
+    )
+    df_with_norm = df_with_norm.drop("major")
+    
+    # Update reference data with any new values found
+    updated = normalizer.update_reference_if_needed()
+    
+    return Output(
+        df_with_norm,
+        metadata={
+            "normalized_field": "major",
+            "row_count": df.shape[0],
+            "reference_updated": updated,
+            "partition": context.asset_partition_key_for_output(),
+            "status": "success"
+        }
+    )
+
+
+@asset(
+    name="silver_normalized_soft_skills",
+    description="Normalize soft skills data from bronze layer",
+    io_manager_key="minio_io_manager",
+    key_prefix=["silver", "cv_assistant"],
+    compute_kind="Normalization",
+    group_name="silver",
+    partitions_def=MONTHLY,
+    ins={
+        "bronze_job_descriptions": AssetIn(key=["bronze", "cv_assistant", "bronze_job_descriptions"]),
+    },
+)
+def normalize_soft_skills(context, bronze_job_descriptions):
+    """
+    Asset to normalize soft skills in job descriptions with improved performance using Polars.
+    Soft skills data is expected to be a list of strings.
+    """
+    normalizer = ReferenceNormalizer('soft_skills')
+    
+    # Use Polars DataFrame directly
+    df = bronze_job_descriptions
+    
+    if "soft_skills" not in df.columns:
+        context.log.warning("Skills column not found in input data")
+        return Output(
+            df,
+            metadata={
+                "normalized_field": "soft_skills",
+                "row_count": df.shape[0],
+                "partition": context.asset_partition_key_for_output(),
+                "status": "no_skills_column"
+            }
+        )
+    
+    # Create a Python UDF for normalization
+    normalize_skills_udf = create_normalize_list_udf(normalizer)
+    
+    # Use Polars apply to process the column
+    df_with_norm = df.with_columns(
+        pl.col("soft_skills").map_elements(normalize_skills_udf).alias("soft_skills")
     )
     
-    # Update reference data if new locations were found
-    if new_locations:
-        reference_data["location"] = sorted(list(set(reference_locations) | new_locations))
-        save_reference_data(reference_data)
-        
-    return df
-
-@asset
-def normalize_major(bronze_jobs_df):
-    """Asset to normalize major in job descriptions."""
-    reference_data = load_reference_data()
-    reference_majors = reference_data["major"]
+    # Update reference data with any new values found
+    updated = normalizer.update_reference_if_needed()
     
-    # Convert pandas DataFrame to polars if needed
-    if not isinstance(bronze_jobs_df, pl.DataFrame):
-        df = pl.from_pandas(bronze_jobs_df)
+    return Output(
+        df_with_norm,
+        metadata={
+            "normalized_field": "soft_skills",
+            "row_count": df.shape[0],
+            "reference_updated": updated,
+            "partition": context.asset_partition_key_for_output(),
+            "status": "success"
+        }
+    )
+
+@asset(
+    name="silver_normalized_tech_stack",
+    description="Normalize tech stack data from bronze layer",
+    io_manager_key="minio_io_manager",
+    key_prefix=["silver", "cv_assistant"],
+    compute_kind="Normalization",
+    group_name="silver",
+    partitions_def=MONTHLY,
+    ins={
+        "bronze_job_descriptions": AssetIn(key=["bronze", "cv_assistant", "bronze_job_descriptions"]),
+    },
+)
+def normalize_tech_stack(context, bronze_job_descriptions):
+    """
+    Asset to normalize tech stack in job descriptions with improved performance using Polars.
+    Tech stack data is expected to be a list of strings.
+    """
+    normalizer = ReferenceNormalizer('tech_stack')
+    
+    # Use Polars DataFrame directly
+    df = bronze_job_descriptions
+    
+    if "tech_stack" not in df.columns:
+        context.log.warning("Tech stack column not found in input data")
+        return Output(
+            df,
+            metadata={
+                "normalized_field": "tech_stack",
+                "row_count": df.shape[0],
+                "partition": context.asset_partition_key_for_output(),
+                "status": "no_tech_stack_column"
+            }
+        )
+    
+    # Create a Python UDF for normalization
+    normalize_tech_stack_udf = create_normalize_list_udf(normalizer)
+    
+    # Use Polars apply to process the column
+    df_with_norm = df.with_columns(
+        pl.col("tech_stack").map_elements(normalize_tech_stack_udf).alias("norm_tech_stack")
+    )
+    
+    # Update reference data with any new values found
+    updated = normalizer.update_reference_if_needed()
+    
+    return Output(
+        df_with_norm,
+        metadata={
+            "normalized_field": "tech_stack",
+            "row_count": df.shape[0],
+            "reference_updated": updated,
+            "partition": context.asset_partition_key_for_output(),
+            "status": "success"
+        }
+    )
+
+@asset(
+    name="silver_jobs_descriptions",
+    description="Combine all normalized data into a silver layer dataframe",
+    io_manager_key="minio_io_manager",
+    key_prefix=["silver", "cv_assistant"],
+    compute_kind="Combination",
+    group_name="silver",
+    partitions_def=MONTHLY,
+    ins={
+        "silver_normalized_location": AssetIn(key=["silver", "cv_assistant", "silver_normalized_location"]),
+        "silver_normalized_major": AssetIn(key=["silver", "cv_assistant", "silver_normalized_major"]),
+        "silver_normalized_skills": AssetIn(key=["silver", "cv_assistant", "silver_normalized_skills"]),
+        "silver_normalized_tech_stack": AssetIn(key=["silver", "cv_assistant", "silver_normalized_tech_stack"]),
+    },
+)
+def silver_jobs_descriptions(context, silver_normalized_location, silver_normalized_major, silver_normalized_skills, silver_normalized_tech_stack):
+    """
+    Combine all normalized data into a silver layer dataframe using Polars.
+    """
+    # Extract the unique identifiers
+    # Note: We need to identify which column to join on, assuming there's an id column
+    join_key = "id"  # Adjust based on your actual unique identifier column
+    
+    # Start with skills DataFrame
+    if "normalized_skills" in silver_normalized_skills.columns:
+        result_df = silver_normalized_skills
     else:
-        df = bronze_jobs_df.clone()
-        
-    if "required_majors" not in df.columns:
-        return df
+        result_df = silver_normalized_skills
     
-    new_majors = set()
+    # Join the normalized columns from other assets
+    if "normalized_location" in silver_normalized_location.columns:
+        result_df = result_df.join(
+            silver_normalized_location.select([join_key, "normalized_location"]), 
+            on=join_key,
+            how="left"
+        )
     
-    def normalize_majors(majors_list):
-        if not isinstance(majors_list, list):
-            return []
-            
-        normalized_majors = []
-        for major in majors_list:
-            norm_major, is_new = normalize_value(major, reference_majors)
-            if norm_major:
-                normalized_majors.append(norm_major)
-                if is_new:
-                    new_majors.add(norm_major)
-        return normalized_majors
+    if "normalized_majors" in silver_normalized_major.columns:
+        result_df = result_df.join(
+            silver_normalized_major.select([join_key, "normalized_majors"]), 
+            on=join_key,
+            how="left"
+        )
     
-    df = df.with_columns(
-        pl.col("required_majors").map_elements(normalize_majors).alias("normalized_majors")
+    if "normalized_tech_stack" in silver_normalized_tech_stack.columns:
+        result_df = result_df.join(
+            silver_normalized_tech_stack.select([join_key, "normalized_tech_stack"]), 
+            on=join_key,
+            how="left"
+        )
+    
+    processing_time = time.time() - start_time
+    context.log.info(f"Combined {result_df.shape[0]} rows in {processing_time:.2f} seconds")
+    
+    return Output(
+        result_df,
+        metadata={
+            "row_count": result_df.shape[0],
+            "column_count": len(result_df.columns),
+            "normalized_columns": str([col for col in result_df.columns if col.startswith("normalized_")]),
+            "processing_time_seconds": processing_time,
+            "partition": context.asset_partition_key_for_output(),
+            "status": "success"
+        }
     )
-    
-    # Update reference data if new majors were found
-    if new_majors:
-        reference_data["major"] = sorted(list(set(reference_majors) | new_majors))
-        save_reference_data(reference_data)
-        
-    return df
-
-@asset
-def silver_jobs_df(normalize_soft_skills, normalize_location, normalize_major):
-    """Combine all normalized data into a silver layer dataframe."""
-    # Start with the base dataframe
-    df = normalize_soft_skills
-    
-    # Add normalized columns from other assets
-    if "normalized_location" in normalize_location.columns:
-        df = df.with_columns(normalize_location.select("normalized_location"))
-    
-    if "normalized_majors" in normalize_major.columns:
-        df = df.with_columns(normalize_major.select("normalized_majors"))
-        
-    return df

@@ -6,7 +6,7 @@ from typing import Optional, List, Sequence
 
 def generate_monthly_partitions():
     # Start from one year ago, using the first day of the month
-    start_date = datetime.strptime("2024-06-01", "%Y-%m-%d")
+    start_date = datetime.strptime("2025-01-01", "%Y-%m-%d")
     # End at current date plus 1 months for future partitioning, using first day of month
     end_date = (datetime.now() + relativedelta(months=1)).replace(day=1)
     partitions = []
