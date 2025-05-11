@@ -262,11 +262,16 @@ def normalize_location(context, bronze_job_descriptions):
     # Create a Python UDF for normalization
     normalize_loc_udf = create_normalize_location_udf(normalizer)
     
-    # Use Polars apply to process the column
-    df_with_norm = df.with_columns(
+    # Use lazy evaluation for better performance
+    df_lazy = df.lazy()
+    df_lazy = df_lazy.with_columns(
         pl.col("location").map_elements(normalize_loc_udf).alias("normalized_location")
     )
-    df_with_norm.drop("location")
+    # Drop original column to save memory, keep only normalized results if needed
+    if "location" in df.columns:
+        df_lazy = df_lazy.drop("location") 
+    # Only collect when the result is needed
+    df_with_norm = df_lazy.collect()
     
     # Update reference data with any new values found
     updated = normalizer.update_reference_if_needed()
@@ -320,11 +325,17 @@ def normalize_major(context, bronze_job_descriptions):
     # Create a Python UDF for normalization
     normalize_majors_udf = create_normalize_list_udf(normalizer)
     
-    # Use Polars apply to process the column
-    df_with_norm = df.with_columns(
+    # Sử dụng lazy evaluation để tối ưu hiệu năng
+    df_lazy = df.lazy()
+    df_lazy = df_lazy.with_columns(
         pl.col("major").map_elements(normalize_majors_udf).alias("normalized_major")
     )
-    df_with_norm = df_with_norm.drop("major")
+    # Xóa cột gốc để tiết kiệm bộ nhớ
+    if "major" in df.columns:
+        df_lazy = df_lazy.drop("major")
+    
+    # Collect chỉ khi cần kết quả
+    df_with_norm = df_lazy.collect()
     
     # Update reference data with any new values found
     updated = normalizer.update_reference_if_needed()
@@ -378,10 +389,17 @@ def normalize_soft_skills(context, bronze_job_descriptions):
     # Create a Python UDF for normalization
     normalize_skills_udf = create_normalize_list_udf(normalizer)
     
-    # Use Polars apply to process the column
-    df_with_norm = df.with_columns(
+    # Sử dụng lazy evaluation để tối ưu hiệu năng
+    df_lazy = df.lazy()
+    df_lazy = df_lazy.with_columns(
         pl.col("soft_skills").map_elements(normalize_skills_udf).alias("normalized_soft_skills")
     )
+    # Xóa cột gốc để tiết kiệm bộ nhớ nếu cần
+    if "soft_skills" in df.columns:
+        df_lazy = df_lazy.drop("soft_skills")
+    
+    # Collect chỉ khi cần kết quả
+    df_with_norm = df_lazy.collect()
     
     # Update reference data with any new values found
     updated = normalizer.update_reference_if_needed()
@@ -434,10 +452,17 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     # Create a Python UDF for normalization
     normalize_tech_stack_udf = create_normalize_list_udf(normalizer)
     
-    # Use Polars apply to process the column
-    df_with_norm = df.with_columns(
+    # Sử dụng lazy evaluation để tối ưu hiệu năng
+    df_lazy = df.lazy()
+    df_lazy = df_lazy.with_columns(
         pl.col("tech_stack").map_elements(normalize_tech_stack_udf).alias("normalized_tech_stack")
     )
+    # Xóa cột gốc để tiết kiệm bộ nhớ nếu cần
+    if "tech_stack" in df.columns:
+        df_lazy = df_lazy.drop("tech_stack")
+    
+    # Collect chỉ khi cần kết quả
+    df_with_norm = df_lazy.collect()
     
     # Update reference data with any new values found
     updated = normalizer.update_reference_if_needed()
@@ -473,6 +498,7 @@ def silver_job_descriptions(context, silver_normalized_location, silver_normaliz
     Combine all normalized data into a silver layer dataframe using Polars.
     """
     join_key = "_id"
+    result_df = pl.DataFrame()
     if "normalized_soft_skills" in silver_normalized_soft_skills.columns:
         result_df = silver_normalized_soft_skills
 
@@ -483,9 +509,9 @@ def silver_job_descriptions(context, silver_normalized_location, silver_normaliz
             how="left"
         )
     
-    if "normalized_majors" in silver_normalized_major.columns:
+    if "normalized_major" in silver_normalized_major.columns:
         result_df = result_df.join(
-            silver_normalized_major.select([join_key, "normalized_majors"]), 
+            silver_normalized_major.select([join_key, "normalized_major"]), 
             on=join_key,
             how="left"
         )
@@ -496,6 +522,24 @@ def silver_job_descriptions(context, silver_normalized_location, silver_normaliz
             on=join_key,
             how="left"
         )
+
+    if result_df.is_empty():
+        context.log.info("No data to combine in silver layer")
+        return Output(
+            pl.DataFrame(),  # Empty DataFrame
+            metadata={
+                "row_count": 0,
+                "partition": context.asset_partition_key_for_output(),
+                "status": "empty"
+            }
+        )
+    
+    for col in result_df.columns:
+        if col.startswith("normalized_"):
+            original_col = col.replace("normalized_", "")
+            if original_col in result_df.columns:
+                result_df = result_df.drop(original_col)
+            result_df = result_df.rename({col: original_col})
     
     return Output(
         result_df,
