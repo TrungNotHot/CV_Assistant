@@ -5,7 +5,7 @@ from dagster import Definitions
 from langchain_google_genai import ChatGoogleGenerativeAI
 from .assets.parser_layer import parse_jds_to_mongodb
 from .assets.bronze_layer import bronze_job_descriptions
-from .assets.silver_layer import normalize_location, normalize_major, normalize_soft_skills, normalize_tech_stack, silver_jobs_df
+from .assets.silver_layer import normalize_location, normalize_major, normalize_soft_skills, normalize_tech_stack, silver_job_descriptions
 
 from .resources.Parser import JDParser
 from .resources.ParserModel import JDParserModel
@@ -46,7 +46,7 @@ defs = Definitions(
             normalize_major,
             normalize_soft_skills,
             normalize_tech_stack,
-            silver_jobs_df
+            silver_job_descriptions
             ],
     resources={
         "minio_io_manager": MinIOIOManager(MINIO_CONFIG),

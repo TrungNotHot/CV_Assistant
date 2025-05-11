@@ -120,9 +120,17 @@ def create_normalize_list_udf(normalizer):
             if not item:
                 continue
                 
-            norm_item, _ = normalizer.normalize(item)
-            if norm_item:
-                normalized_items.append(norm_item)
+            try:
+                norm_result = normalizer.normalize(item)
+                if norm_result and isinstance(norm_result, tuple) and len(norm_result) == 2:
+                    norm_item, _ = norm_result
+                    if norm_item:
+                        normalized_items.append(norm_item)
+            except Exception as e:
+                # Log the error but continue processing
+                print(f"Error normalizing item '{item}': {str(e)}")
+                continue
+                
         return normalized_items
     return normalize_list
 
@@ -256,7 +264,7 @@ def normalize_location(context, bronze_job_descriptions):
     
     # Use Polars apply to process the column
     df_with_norm = df.with_columns(
-        pl.col("location").map_elements(normalize_loc_udf).alias("location")
+        pl.col("location").map_elements(normalize_loc_udf).alias("normalized_location")
     )
     df_with_norm.drop("location")
     
@@ -314,7 +322,7 @@ def normalize_major(context, bronze_job_descriptions):
     
     # Use Polars apply to process the column
     df_with_norm = df.with_columns(
-        pl.col("major").map_elements(normalize_majors_udf).alias("major")
+        pl.col("major").map_elements(normalize_majors_udf).alias("normalized_major")
     )
     df_with_norm = df_with_norm.drop("major")
     
@@ -372,7 +380,7 @@ def normalize_soft_skills(context, bronze_job_descriptions):
     
     # Use Polars apply to process the column
     df_with_norm = df.with_columns(
-        pl.col("soft_skills").map_elements(normalize_skills_udf).alias("soft_skills")
+        pl.col("soft_skills").map_elements(normalize_skills_udf).alias("normalized_soft_skills")
     )
     
     # Update reference data with any new values found
@@ -428,7 +436,7 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     
     # Use Polars apply to process the column
     df_with_norm = df.with_columns(
-        pl.col("tech_stack").map_elements(normalize_tech_stack_udf).alias("norm_tech_stack")
+        pl.col("tech_stack").map_elements(normalize_tech_stack_udf).alias("normalized_tech_stack")
     )
     
     # Update reference data with any new values found
@@ -446,7 +454,7 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     )
 
 @asset(
-    name="silver_jobs_descriptions",
+    name="silver_job_descriptions",
     description="Combine all normalized data into a silver layer dataframe",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
@@ -456,25 +464,18 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     ins={
         "silver_normalized_location": AssetIn(key=["silver", "cv_assistant", "silver_normalized_location"]),
         "silver_normalized_major": AssetIn(key=["silver", "cv_assistant", "silver_normalized_major"]),
-        "silver_normalized_skills": AssetIn(key=["silver", "cv_assistant", "silver_normalized_skills"]),
+        "silver_normalized_soft_skills": AssetIn(key=["silver", "cv_assistant", "silver_normalized_soft_skills"]),
         "silver_normalized_tech_stack": AssetIn(key=["silver", "cv_assistant", "silver_normalized_tech_stack"]),
     },
 )
-def silver_jobs_descriptions(context, silver_normalized_location, silver_normalized_major, silver_normalized_skills, silver_normalized_tech_stack):
+def silver_job_descriptions(context, silver_normalized_location, silver_normalized_major, silver_normalized_soft_skills, silver_normalized_tech_stack):
     """
     Combine all normalized data into a silver layer dataframe using Polars.
     """
-    # Extract the unique identifiers
-    # Note: We need to identify which column to join on, assuming there's an id column
-    join_key = "id"  # Adjust based on your actual unique identifier column
-    
-    # Start with skills DataFrame
-    if "normalized_skills" in silver_normalized_skills.columns:
-        result_df = silver_normalized_skills
-    else:
-        result_df = silver_normalized_skills
-    
-    # Join the normalized columns from other assets
+    join_key = "_id"
+    if "normalized_soft_skills" in silver_normalized_soft_skills.columns:
+        result_df = silver_normalized_soft_skills
+
     if "normalized_location" in silver_normalized_location.columns:
         result_df = result_df.join(
             silver_normalized_location.select([join_key, "normalized_location"]), 
@@ -496,16 +497,12 @@ def silver_jobs_descriptions(context, silver_normalized_location, silver_normali
             how="left"
         )
     
-    processing_time = time.time() - start_time
-    context.log.info(f"Combined {result_df.shape[0]} rows in {processing_time:.2f} seconds")
-    
     return Output(
         result_df,
         metadata={
             "row_count": result_df.shape[0],
             "column_count": len(result_df.columns),
             "normalized_columns": str([col for col in result_df.columns if col.startswith("normalized_")]),
-            "processing_time_seconds": processing_time,
             "partition": context.asset_partition_key_for_output(),
             "status": "success"
         }
