@@ -242,6 +242,19 @@ def normalize_location(context, bronze_job_descriptions):
     Asset to normalize location in job descriptions with improved performance using Polars.
     Location data is expected to be a string.
     """
+    # Check if the input DataFrame is empty
+    if bronze_job_descriptions.is_empty():
+        context.log.info("Input DataFrame is empty, skipping normalization")
+        return Output(
+            bronze_job_descriptions,
+            metadata={
+                "normalized_field": "soft_skills",
+                "row_count": 0,
+                "partition": context.asset_partition_key_for_output(),
+                "status": "empty_input"
+            }
+        )
+    
     normalizer = ReferenceNormalizer('location')
     
     # Use Polars DataFrame directly
@@ -305,6 +318,19 @@ def normalize_major(context, bronze_job_descriptions):
     Asset to normalize major in job descriptions with improved performance using Polars.
     Major data is expected to be a list of strings.
     """
+    # Check if the input DataFrame is empty
+    if bronze_job_descriptions.is_empty():
+        context.log.info("Input DataFrame is empty, skipping normalization")
+        return Output(
+            bronze_job_descriptions,
+            metadata={
+                "normalized_field": "soft_skills",
+                "row_count": 0,
+                "partition": context.asset_partition_key_for_output(),
+                "status": "empty_input"
+            }
+        )
+
     normalizer = ReferenceNormalizer('major')
     
     # Use Polars DataFrame directly
@@ -369,6 +395,19 @@ def normalize_soft_skills(context, bronze_job_descriptions):
     Asset to normalize soft skills in job descriptions with improved performance using Polars.
     Soft skills data is expected to be a list of strings.
     """
+    # Check if the input DataFrame is empty
+    if bronze_job_descriptions.is_empty():
+        context.log.info("Input DataFrame is empty, skipping normalization")
+        return Output(
+            bronze_job_descriptions,
+            metadata={
+                "normalized_field": "soft_skills",
+                "row_count": 0,
+                "partition": context.asset_partition_key_for_output(),
+                "status": "empty_input"
+            }
+        )
+        
     normalizer = ReferenceNormalizer('soft_skills')
     
     # Use Polars DataFrame directly
@@ -432,8 +471,21 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     Asset to normalize tech stack in job descriptions with improved performance using Polars.
     Tech stack data is expected to be a list of strings.
     """
+    # Check if the input DataFrame is empty
+    if bronze_job_descriptions.is_empty():
+        context.log.info("Input DataFrame is empty, skipping normalization")
+        return Output(
+            bronze_job_descriptions,
+            metadata={
+                "normalized_field": "soft_skills",
+                "row_count": 0,
+                "partition": context.asset_partition_key_for_output(),
+                "status": "empty_input"
+            }
+        )
+
     normalizer = ReferenceNormalizer('tech_stack')
-    
+
     # Use Polars DataFrame directly
     df = bronze_job_descriptions
     
@@ -495,6 +547,19 @@ def normalize_job_position(context, bronze_job_descriptions):
     Asset to normalize job position in job descriptions with improved performance using Polars.
     Job position data is expected to be a string.
     """
+    # Check if the input DataFrame is empty
+    if bronze_job_descriptions.is_empty():
+        context.log.info("Input DataFrame is empty, skipping normalization")
+        return Output(
+            bronze_job_descriptions,
+            metadata={
+                "normalized_field": "soft_skills",
+                "row_count": 0,
+                "partition": context.asset_partition_key_for_output(),
+                "status": "empty_input"
+            }
+        )
+
     normalizer = ReferenceNormalizer('job_position')
     
     # Use Polars DataFrame directly

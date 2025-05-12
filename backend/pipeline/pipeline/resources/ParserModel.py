@@ -89,7 +89,7 @@ class JDParserModel(BaseParserModel):
             f'2. For soft_skills: Match or standardize using format from these standard terms when possible: {soft_skills_str}\n'
             f'3. For seniority_level: Categorize as one or more of: {seniority_str}\n'
             f'4. For majors: Assign to one or more of: {major_str}\n'
-            f'5. For job_position: Match or standardize using format from these standard terms when possible: {job_position_str}\n'
+            f'5. For job_position: You MUST translate to English if it is in any other language.After translation, standardize using format from these standard terms when possible: {job_position_str}\n'
             f'6. For tech_stack: Normalize technical terms to their official names\n'
             f'   (e.g., "nodejs" → "Node.js", "postgres" → "PostgreSQL")\n'
             f'   Use these standard terms when applicable: {tech_stack_str}\n'
