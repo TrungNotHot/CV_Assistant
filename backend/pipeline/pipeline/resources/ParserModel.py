@@ -59,31 +59,41 @@ class JDParserModel(BaseParserModel):
         except Exception as e:
             logging.error(f"Error loading reference data: {str(e)}")
             return {
+                "tech_stack": [],
                 "soft_skills": [],
                 "seniority_level": [],
-                "major": []
+                "major": [],
+                "job_position": []
             }
     
     def _create_enhanced_prompt(self, jd_text: str) -> str:
         """Create an enhanced prompt using reference data"""
+        # Create tech stack list for context
+        tech_stack_str = ", ".join(self.reference_data.get("tech_stack", []))
         # Create soft skills list for context
         soft_skills_str = ", ".join(self.reference_data.get("soft_skills", []))
         # Create seniority levels list for context
         seniority_str = ", ".join(self.reference_data.get("seniority_level", []))
         # Create major list for context
         major_str = ", ".join(self.reference_data.get("major", []))
+        # Create job position list for context
+        job_position_str = ", ".join(self.reference_data.get("job_position", []))
         
         # Construct the enhanced extraction message
         return (
             f'"{jd_text}"\n\n---\n\n'
-            f'Extract information in English from the job description above into the following JSON format with utf-8 encoding:\n'
+            f'Extract key information from the job description above into this JSON format:\n'
             f'{self.parse_format}\n\n'
-            f'Please ensure you:\n'
-            f'1. Standardize soft skills from this list when possible: {soft_skills_str}\n'
-            f'2. Map the seniority level to one/many of these values: {seniority_str}\n'
-            f'3. Map the major to one/many of these values: {major_str}\n'
-            f'4 Extract all technology stacks (tech_stack) mentioned in the text. Normalize each to its original name. '
-            "For example: 'reactjs' → 'React', 'nodejs' → 'Node.js', 'postgres' → 'PostgreSQL'"
+            f'Guidelines:\n'
+            f'1. Respond only in English\n'
+            f'2. For soft_skills: Match or standardize using format from these standard terms when possible: {soft_skills_str}\n'
+            f'3. For seniority_level: Categorize as one or more of: {seniority_str}\n'
+            f'4. For majors: Assign to one or more of: {major_str}\n'
+            f'5. For job_position: Match or standardize using format from these standard terms when possible: {job_position_str}\n'
+            f'6. For tech_stack: Normalize technical terms to their official names\n'
+            f'   (e.g., "nodejs" → "Node.js", "postgres" → "PostgreSQL")\n'
+            f'   Use these standard terms when applicable: {tech_stack_str}\n'
+            f'7. Return valid JSON with proper formatting and ensure all fields are present\n'
         )
     
     def query(self, jd_text):

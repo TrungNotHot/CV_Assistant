@@ -94,9 +94,15 @@ class JDParser():
             results.append(standardized_dict)
         return results
     
-    def parseFromText(self, jd_text, extract_json=True):
+    def parseFromText(self, jd_text, job_title=None, extract_json=True):
+        # Concatenate job_title with jd_text if provided
+        if job_title:
+            input_text = f"{job_title}\n\n{jd_text}"
+        else:
+            input_text = jd_text
+            
         # Extract jd info as a string
-        jd_info = self.extractInformation(jd_text=jd_text)
+        jd_info = self.extractInformation(jd_text=input_text)
         
         # Extract jd info as a dict
         if extract_json:
@@ -201,8 +207,13 @@ class JDParser():
             logging.info("No unparsed JDs found in MongoDB")
             return 0
         
-        # Extract JD texts
-        jd_texts = [jd.get('full_text_jd', '') for jd in unparsed_jds]
+        # Extract JD texts and job titles
+        jd_texts = []
+        for jd in unparsed_jds:
+            job_title = jd.get('job_title', '')
+            full_text_jd = jd.get('full_text_jd', '')
+            combined_text = f"{job_title}\n\n{full_text_jd}" if job_title else full_text_jd
+            jd_texts.append(combined_text)
         
         # Use LangChain's batch processing
         parsed_texts = self.batch_extract_information(jd_texts)
@@ -226,7 +237,12 @@ class JDParser():
 
         parser = JDParser(model=parser_gemini_model, mongo_config=mongo_config)
 
-        jd_info_dict = parser.parseFromText(jd_data['full_text_jd'])
+        # Get job_title and full_text_jd from jd_data
+        job_title = jd_data.get('job_title', '')
+        full_text_jd = jd_data.get('full_text_jd', '')
+        
+        # Parse with both job_title and full_text_jd
+        jd_info_dict = parser.parseFromText(jd_text=full_text_jd, job_title=job_title)
         jd_info_dict = parser.standardizeJDDict(jd_info_dict)
         result_data = {
             "job_title": jd_data['job_title'],

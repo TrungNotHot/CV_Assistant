@@ -479,6 +479,68 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     )
 
 @asset(
+    name="silver_normalized_job_position",
+    description="Normalize job position data from bronze layer",
+    io_manager_key="minio_io_manager",
+    key_prefix=["silver", "cv_assistant"],
+    compute_kind="Normalization",
+    group_name="silver",
+    partitions_def=MONTHLY,
+    ins={
+        "bronze_job_descriptions": AssetIn(key=["bronze", "cv_assistant", "bronze_job_descriptions"]),
+    },
+)
+def normalize_job_position(context, bronze_job_descriptions):
+    """
+    Asset to normalize job position in job descriptions with improved performance using Polars.
+    Job position data is expected to be a string.
+    """
+    normalizer = ReferenceNormalizer('job_position')
+    
+    # Use Polars DataFrame directly
+    df = bronze_job_descriptions
+    
+    if "job_position" not in df.columns:
+        context.log.warning("Job position column not found in input data")
+        return Output(
+            df, 
+            metadata={
+                "normalized_field": "job_position",
+                "row_count": df.shape[0],
+                "partition": context.asset_partition_key_for_output(),
+                "status": "no_job_position_column"
+            }
+        )
+    
+    # Create a Python UDF for normalization
+    normalize_position_udf = create_normalize_location_udf(normalizer)
+    
+    # Use lazy evaluation for better performance
+    df_lazy = df.lazy()
+    df_lazy = df_lazy.with_columns(
+        pl.col("job_position").map_elements(normalize_position_udf).alias("normalized_job_position")
+    )
+    # Drop original column to save memory, keep only normalized results if needed
+    if "job_position" in df.columns:
+        df_lazy = df_lazy.drop("job_position") 
+    # Only collect when the result is needed
+    df_with_norm = df_lazy.collect()
+    
+    # Update reference data with any new values found
+    updated = normalizer.update_reference_if_needed()
+    
+    return Output(
+        df_with_norm,
+        metadata={
+            "normalized_field": "job_position",
+            "row_count": df.shape[0],
+            "reference_updated": updated,
+            "partition": context.asset_partition_key_for_output(),
+            "status": "success"
+        }
+    )
+
+@asset(
     name="silver_job_descriptions",
     description="Combine all normalized data into a silver layer dataframe",
     io_manager_key="minio_io_manager",
@@ -491,9 +553,10 @@ def normalize_tech_stack(context, bronze_job_descriptions):
         "silver_normalized_major": AssetIn(key=["silver", "cv_assistant", "silver_normalized_major"]),
         "silver_normalized_soft_skills": AssetIn(key=["silver", "cv_assistant", "silver_normalized_soft_skills"]),
         "silver_normalized_tech_stack": AssetIn(key=["silver", "cv_assistant", "silver_normalized_tech_stack"]),
+        "silver_normalized_job_position": AssetIn(key=["silver", "cv_assistant", "silver_normalized_job_position"]),
     },
 )
-def silver_job_descriptions(context, silver_normalized_location, silver_normalized_major, silver_normalized_soft_skills, silver_normalized_tech_stack):
+def silver_job_descriptions(context, silver_normalized_location, silver_normalized_major, silver_normalized_soft_skills, silver_normalized_tech_stack, silver_normalized_job_position):
     """
     Combine all normalized data into a silver layer dataframe using Polars.
     """
@@ -519,6 +582,13 @@ def silver_job_descriptions(context, silver_normalized_location, silver_normaliz
     if "normalized_tech_stack" in silver_normalized_tech_stack.columns:
         result_df = result_df.join(
             silver_normalized_tech_stack.select([join_key, "normalized_tech_stack"]), 
+            on=join_key,
+            how="left"
+        )
+    
+    if "normalized_job_position" in silver_normalized_job_position.columns:
+        result_df = result_df.join(
+            silver_normalized_job_position.select([join_key, "normalized_job_position"]), 
             on=join_key,
             how="left"
         )
