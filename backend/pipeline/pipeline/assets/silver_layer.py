@@ -363,15 +363,15 @@ def normalize_major(context, bronze_job_descriptions):
     # Collect chỉ khi cần kết quả
     df_with_norm = df_lazy.collect()
     
-    # Update reference data with any new values found
-    updated = normalizer.update_reference_if_needed()
+    # # Update reference data with any new values found
+    # updated = normalizer.update_reference_if_needed()
     
     return Output(
         df_with_norm,
         metadata={
             "normalized_field": "major",
             "row_count": df.shape[0],
-            "reference_updated": updated,
+            # "reference_updated": updated,
             "partition": context.asset_partition_key_for_output(),
             "status": "success"
         }
