@@ -1,7 +1,9 @@
 from pymongo import MongoClient, InsertOne, DeleteOne, UpdateOne
 from pymongo.collection import Collection
 import polars as pl
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Generator, Iterator
+from bson import ObjectId
+
 
 # MongoDB Connection Manager
 class MongoDBManager:
@@ -52,8 +54,71 @@ class MongoDBManager:
         if self._client:
             self._client.close()
             self._client = None
+    
+    def _process_mongodb_objectid(self, documents: List[Dict]) -> List[Dict]:
+        """
+        Process MongoDB ObjectId fields in documents to make them compatible with Parquet
+        
+        Args:
+            documents: List of MongoDB documents
             
-    def extract_data(self, collection_name: str, query: Dict = None, projection: Dict = None, limit: int = None) -> pl.DataFrame:
+        Returns:
+            List of documents with ObjectId converted to strings
+        """
+        processed_documents = []
+        
+        for doc in documents:
+            # Convert ObjectId to string in the document
+            if '_id' in doc and doc['_id'] is not None:
+                if isinstance(doc['_id'], ObjectId):
+                    doc['_id'] = str(doc['_id'])
+                elif isinstance(doc['_id'], dict) and '$oid' in doc['_id']:
+                    doc['_id'] = doc['_id']['$oid']
+                    
+            processed_documents.append(doc)
+            
+        return processed_documents
+    
+    def stream_data(self, collection_name: str, query: Dict = None, projection: Dict = None, 
+                   batch_size: int = 100) -> Generator[pl.DataFrame, None, None]:
+        """
+        Stream MongoDB data in batches to reduce memory usage
+        
+        Args:
+            collection_name: Name of the MongoDB collection
+            query: MongoDB query filter
+            projection: Fields to include/exclude
+            batch_size: Number of records to fetch in each batch
+            
+        Yields:
+            Polars DataFrame containing a batch of query results
+        """
+        collection = self.get_collection(collection_name)
+        
+        if query is None:
+            query = {}
+            
+        # Create cursor with batch_size for efficient processing
+        cursor = collection.find(query, projection).batch_size(batch_size)
+        
+        # Process in batches
+        batch = []
+        for doc in cursor:
+            batch.append(doc)
+            if len(batch) >= batch_size:
+                # Process ObjectId before converting to DataFrame
+                processed_batch = self._process_mongodb_objectid(batch)
+                yield pl.DataFrame(processed_batch)
+                batch = []
+                
+        # Don't forget the last batch which might be smaller
+        if batch:
+            # Process ObjectId before converting to DataFrame
+            processed_batch = self._process_mongodb_objectid(batch)
+            yield pl.DataFrame(processed_batch)
+            
+    def extract_data(self, collection_name: str, query: Dict = None, projection: Dict = None, 
+                    limit: int = None, batch_size: int = None) -> pl.DataFrame:
         """
         Execute a MongoDB query and return the results as a Polars DataFrame
         
@@ -62,6 +127,7 @@ class MongoDBManager:
             query: MongoDB query filter (default: {})
             projection: Fields to include/exclude (default: None, which includes all fields)
             limit: Maximum number of documents to return (default: None, which returns all documents)
+            batch_size: Process in batches to reduce memory usage (default: None)
             
         Returns:
             Polars DataFrame containing the query results
@@ -71,7 +137,29 @@ class MongoDBManager:
         
         if query is None:
             query = {}
+        
+        # If batch_size is specified, use streaming approach
+        if batch_size:
+            dfs = []
+            doc_count = 0
+            for batch_df in self.stream_data(collection_name, query, projection, batch_size):
+                dfs.append(batch_df)
+                doc_count += batch_df.height
+                
+                # Apply limit if specified
+                if limit and doc_count >= limit:
+                    # Trim the last batch if needed
+                    if doc_count > limit:
+                        excess = doc_count - limit
+                        dfs[-1] = dfs[-1].slice(0, batch_df.height - excess)
+                    break
             
+            # Combine all batches
+            if not dfs:
+                return pl.DataFrame()
+            return pl.concat(dfs)
+        
+        # Otherwise use original approach
         cursor = collection.find(query, projection)
         
         if limit:
@@ -81,6 +169,17 @@ class MongoDBManager:
         
         if not documents:
             return pl.DataFrame()
-            
-        df = pl.DataFrame(documents)
+        
+        # Process ObjectId before converting to DataFrame
+        processed_documents = self._process_mongodb_objectid(documents)
+        df = pl.DataFrame(processed_documents)
         return df
+        
+    def count_documents(self, collection_name: str, query: Dict = None) -> int:
+        """Count documents matching the query"""
+        collection = self.get_collection(collection_name)
+        
+        if query is None:
+            query = {}
+            
+        return collection.count_documents(query)

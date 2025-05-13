@@ -1,8 +1,10 @@
-from dagster import asset, Output, StaticPartitionsDefinition
+from dagster import asset, Output, StaticPartitionsDefinition, Config
 import polars as pl
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from typing import Optional, List, Sequence
+import json
+import pandas as pd
 
 def generate_monthly_partitions():
     # Start from one year ago, using the first day of the month
@@ -21,7 +23,7 @@ MONTHLY = StaticPartitionsDefinition(generate_monthly_partitions())
 
 @asset(
     name="bronze_job_descriptions",
-    description="Extract data from MySQL and load into MinIO",
+    description="Extract data from MongoDB and load into MinIO",
     io_manager_key="minio_io_manager",
     required_resource_keys={"mongo_db_manager"},
     key_prefix=["bronze", "cv_assistant"],
@@ -41,19 +43,18 @@ def bronze_job_descriptions(context) -> Output[pl.DataFrame]:
         }
     }
     
-    # Get data from MongoDB using extract_data method
-    df_data = context.resources.mongo_db_manager.extract_data(
+    # First check count to avoid unnecessary processing
+    record_count = context.resources.mongo_db_manager.count_documents(
         collection_name="parsed_job_descriptions", 
         query=query
     )
     
-    # Check if we have data for this partition
-    if df_data.is_empty():
+    context.log.info(f"Found {record_count} records for partition {partition}")
+    
+    if record_count == 0:
         context.log.info(f"No data found for partition {partition} (month). Returning empty DataFrame.")
-        # Close MongoDB connection
-        context.resources.mongo_db_manager.close_connection()
         return Output(
-            df_data,
+            pl.DataFrame(),
             metadata={
                 "collection": "job_descriptions",
                 "row_count": 0,
@@ -61,7 +62,17 @@ def bronze_job_descriptions(context) -> Output[pl.DataFrame]:
                 "status": "empty"
             },
         )
+    
+    # Get data from MongoDB using extract_data with batch processing
+    # MongoDB ObjectId will be automatically processed by mongo_db_manager
+    df_data = context.resources.mongo_db_manager.extract_data(
+        collection_name="parsed_job_descriptions", 
+        query=query,
+        batch_size=500
+    )
+    
     context.log.info(f"Collection extracted with shape: {df_data.shape}")
+    
     # Close MongoDB connection after successfully extracting data
     context.resources.mongo_db_manager.close_connection()
     

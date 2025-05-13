@@ -230,7 +230,7 @@ class ReferenceNormalizer:
     description="Normalize location data from bronze layer",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
-    compute_kind="Normalization",
+    compute_kind="Polars",
     group_name="silver",
     partitions_def=MONTHLY,
     ins={
@@ -306,7 +306,7 @@ def normalize_location(context, bronze_job_descriptions):
     description="Normalize major data from bronze layer",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
-    compute_kind="Normalization",
+    compute_kind="Polars",
     group_name="silver",
     partitions_def=MONTHLY,
     ins={
@@ -383,7 +383,7 @@ def normalize_major(context, bronze_job_descriptions):
     description="Normalize soft skills data from bronze layer",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
-    compute_kind="Normalization",
+    compute_kind="Polars",
     group_name="silver",
     partitions_def=MONTHLY,
     ins={
@@ -459,7 +459,7 @@ def normalize_soft_skills(context, bronze_job_descriptions):
     description="Normalize tech stack data from bronze layer",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
-    compute_kind="Normalization",
+    compute_kind="Polars",
     group_name="silver",
     partitions_def=MONTHLY,
     ins={
@@ -535,7 +535,7 @@ def normalize_tech_stack(context, bronze_job_descriptions):
     description="Normalize job position data from bronze layer",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
-    compute_kind="Normalization",
+    compute_kind="Polars",
     group_name="silver",
     partitions_def=MONTHLY,
     ins={
@@ -610,7 +610,7 @@ def normalize_job_position(context, bronze_job_descriptions):
     description="Combine all normalized data into a silver layer dataframe",
     io_manager_key="minio_io_manager",
     key_prefix=["silver", "cv_assistant"],
-    compute_kind="Combination",
+    compute_kind="Polars",
     group_name="silver",
     partitions_def=MONTHLY,
     ins={
