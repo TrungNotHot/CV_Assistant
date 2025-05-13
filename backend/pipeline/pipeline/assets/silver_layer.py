@@ -286,9 +286,6 @@ def normalize_location(context, bronze_job_descriptions):
     # Only collect when the result is needed
     df_with_norm = df_lazy.collect()
     
-    # Update reference data with any new values found
-    updated = normalizer.update_reference_if_needed()
-    
     return Output(
         df_with_norm,
         metadata={
@@ -363,8 +360,8 @@ def normalize_major(context, bronze_job_descriptions):
     # Collect chỉ khi cần kết quả
     df_with_norm = df_lazy.collect()
     
-    # Update reference data with any new values found
-    updated = normalizer.update_reference_if_needed()
+    # # Update reference data with any new values found
+    # updated = normalizer.update_reference_if_needed()
     
     return Output(
         df_with_norm,
