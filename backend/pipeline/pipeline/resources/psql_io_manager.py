@@ -1,130 +1,145 @@
-from dagster import IOManager, InputContext, OutputContext
 import polars as pl
-import psycopg2
-from psycopg2.extras import execute_values
-
-
-def connect_psql(config, table):
-    conn = {
-        "url": f"jdbc:postgresql://{config['host']}:{config['port']}/{config['database']}",
-        "dbtable": table,
-        "user": config["user"],
-        "password": config["password"],
-        "host": config["host"],
-        "port": config["port"],
-        "database": config["database"],
-    }
-    return conn
+import pandas as pd
+from sqlalchemy import create_engine, text
+from dagster import IOManager, OutputContext, InputContext
 
 
 class PostgreSQLIOManager(IOManager):
     def __init__(self, config):
         self._config = config
-
-    def handle_output(self, context: OutputContext, obj: pl.DataFrame):
-        # Use asset metadata if available, otherwise fallback to default path-based approach
-        if context.metadata and "schema" in context.metadata and "table" in context.metadata:
-            schema_ = context.metadata["schema"]
-            table = context.metadata["table"]
-        else:
-            # Fallback to default behavior
-            table = context.asset_key.path[-1]
-            schema_ = context.asset_key.path[-2]
-            
-        full_table = f"{schema_}.{table}"
-        conn_info = connect_psql(self._config, full_table)
-        
-        context.log.info(f"Writing Polars DataFrame to PostgreSQL table {full_table}")
-
-        # Convert Polars DataFrame to pandas for compatibility with psycopg2
-        pandas_df = obj.to_pandas()
-        
-        # Get column names and data types
-        columns = pandas_df.columns.tolist()
-        placeholders = ', '.join(['%s'] * len(columns))
-        column_str = ', '.join([f'"{col}"' for col in columns])
-        
-        # Create connection and cursor
-        conn = psycopg2.connect(
-            host=conn_info['host'],
-            port=conn_info['port'],
-            database=conn_info['database'],
-            user=conn_info['user'],
-            password=conn_info['password']
+        self.connection_string = (
+            f"postgresql+psycopg2://{config['user']}:{config['password']}"
+            + f"@{config['host']}:{config['port']}"
+            + f"/{config['database']}"
         )
+        self.engine = create_engine(self.connection_string)
+
+    def _ensure_schema_exists(self, schema, context):
+        """Create schema if it doesn't exist."""
+        try:
+            with self.engine.connect() as conn:
+                # Check if schema exists
+                check_schema_sql = text(
+                    f"SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = '{schema}')"
+                )
+                schema_exists = conn.execute(check_schema_sql).scalar()
+                
+                if not schema_exists:
+                    context.log.info(f"Schema '{schema}' does not exist. Creating it.")
+                    conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+                    conn.commit()
+                    context.log.info(f"Successfully created schema '{schema}'")
+                    return True
+                
+                return True
+        except Exception as e:
+            context.log.error(f"Failed to create schema '{schema}': {str(e)}")
+            raise
+            
+    def handle_output(self, context: OutputContext, obj: pl.DataFrame):
+        """Store a Polars DataFrame in a PostgreSQL table."""
+        if obj is None or obj.shape[0] == 0:
+            context.log.warning("Received empty DataFrame, skipping storage operation")
+            return
+            
+        layer, schema, table = context.asset_key.path
+        table_name = table.replace(f'{layer}_', '')
+        context.log.info(f"Writing {obj.shape[0]} rows to {schema}.{table_name}")
+        
+        # Ensure schema exists before attempting to write
+        self._ensure_schema_exists(schema, context)
         
         try:
-            with conn.cursor() as cur:
-                # Create schema if it doesn't exist
-                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_}")
-                
-                # Drop table if exists (for overwrite mode)
-                cur.execute(f"DROP TABLE IF EXISTS {full_table}")
-                
-                # Extract metadata for table creation
-                primary_keys = context.metadata.get("primary_keys", []) if context.metadata else []
-                specific_columns = context.metadata.get("columns", []) if context.metadata else []
-                
-                # Create table based on DataFrame schema and metadata
-                create_table_query = self._create_table_sql(full_table, pandas_df, primary_keys, specific_columns)
-                cur.execute(create_table_query)
-                
-                # Insert data using execute_values for better performance
-                data_tuples = [tuple(row) for row in pandas_df.values]
-                insert_query = f'INSERT INTO {full_table} ({column_str}) VALUES %s'
-                execute_values(cur, insert_query, data_tuples)
-                
-                conn.commit()
-                context.log.info(f"Successfully wrote {len(obj)} rows to {full_table}")
-                
-                # Log metadata information for reference
-                if primary_keys:
-                    context.log.info(f"Table created with primary key(s): {', '.join(primary_keys)}")
-                    
-        except Exception as e:
-            conn.rollback()
-            context.log.error(f"Error writing to PostgreSQL: {str(e)}")
-            raise
-        finally:
-            conn.close()
-    
-    def _create_table_sql(self, table_name, df, primary_key_cols=None, specific_columns=None):
-        """Generate SQL to create table based on pandas DataFrame schema and asset metadata"""
-        columns = []
-        
-        # If specific columns are defined in metadata, ensure they are in the correct order
-        column_order = specific_columns if specific_columns else df.columns
-        
-        for col_name in column_order:
-            if col_name in df.columns:  # Make sure the column exists in the DataFrame
-                pg_type = self._map_pandas_type_to_postgres(df.dtypes[col_name])
-                columns.append(f'"{col_name}" {pg_type}')
+            if context.has_partition_key:
+                try:
+                    # Convert Polars DataFrame to Pandas temporarily for using to_sql
+                    obj.to_pandas().to_sql(
+                        name=table_name,
+                        con=self.engine,
+                        schema=schema,
+                        if_exists='append',
+                        index=False
+                    )
+                    context.log.info(f"Successfully appended data to {schema}.{table_name}")
+                except Exception as e:
+                    context.log.info(f"Table {schema}.{table_name} needs to be recreated: {str(e)}")
+                    # Create empty dataframe with same schema
+                    empty_df = pl.DataFrame(schema=obj.schema).to_pandas()
+                    empty_df.to_sql(
+                        name=table_name,
+                        con=self.engine,
+                        schema=schema,
+                        if_exists='replace',
+                        index=False
+                    )
+                    # Then append the data
+                    obj.to_pandas().to_sql(
+                        name=table_name,
+                        con=self.engine,
+                        schema=schema,
+                        if_exists='append',
+                        index=False
+                    )
+                    context.log.info(f"Successfully recreated and appended data to {schema}.{table_name}")
             else:
-                # Log warning but continue - this should not happen if metadata is consistent with data
-                # Could add logging here in the future
-                pass
-                
-        # Add primary key constraint if primary keys are defined
-        if primary_key_cols and len(primary_key_cols) > 0:
-            primary_key_clause = f', PRIMARY KEY ({", ".join([f"\"{pk}\"" for pk in primary_key_cols])})'
-            return f"CREATE TABLE {table_name} ({', '.join(columns)}{primary_key_clause})"
-        
-        return f"CREATE TABLE {table_name} ({', '.join(columns)})"
-    
-    def _map_pandas_type_to_postgres(self, dtype):
-        """Map pandas dtype to PostgreSQL type"""
-        dtype_str = str(dtype)
-        
-        if 'int' in dtype_str:
-            return 'INTEGER'
-        elif 'float' in dtype_str:
-            return 'DOUBLE PRECISION'
-        elif 'bool' in dtype_str:
-            return 'BOOLEAN'
-        elif 'datetime' in dtype_str:
-            return 'TIMESTAMP'
-        else:
-            return 'TEXT'
+                obj.to_pandas().to_sql(
+                    name=table_name,
+                    con=self.engine,
+                    schema=schema,
+                    if_exists='replace',
+                    index=False
+                )
+                context.log.info(f"Successfully replaced data in {schema}.{table_name}")
+        except Exception as e:
+            context.log.error(f"Failed to write data to {schema}.{table_name}: {str(e)}")
+            raise
 
     def load_input(self, context: InputContext) -> pl.DataFrame:
-        pass
+        """Load data from a PostgreSQL table as a Polars DataFrame."""
+        layer, schema, table = context.asset_key.path
+        table_name = table.replace(f'{layer}_', '')
+        
+        # Ensure schema exists before attempting to read
+        schema_exists = self._ensure_schema_exists(schema, context)
+        if not schema_exists:
+            context.log.warning(f"Schema '{schema}' could not be created. Returning empty DataFrame.")
+            return pl.DataFrame()
+            
+        try:
+            context.log.info(f"Loading data from {schema}.{table_name}")
+            
+            # Check if the table exists
+            with self.engine.connect() as conn:
+                check_table_sql = text(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables "
+                    f"WHERE table_schema = '{schema}' AND table_name = '{table_name}')"
+                )
+                result = conn.execute(check_table_sql).scalar()
+                
+                if not result:
+                    context.log.warning(f"Table {schema}.{table_name} does not exist")
+                    return pl.DataFrame()
+                
+                # If we have a partition key, filter by partition
+                if context.has_partition_key:
+                    # Assuming partition key is stored in metadata
+                    partition_key = context.asset_partition_key
+                    partition_column = context.resource_config.get('partition_column', 'date')
+                    
+                    query = f"SELECT * FROM {schema}.{table_name} WHERE {partition_column} = '{partition_key}'"
+                    context.log.info(f"Loading partition {partition_key} from {schema}.{table_name}")
+                else:
+                    query = f"SELECT * FROM {schema}.{table_name}"
+                
+                # Read data into pandas DataFrame first
+                pandas_df = pd.read_sql(query, conn)
+                
+                # Convert to Polars DataFrame
+                polars_df = pl.from_pandas(pandas_df)
+                context.log.info(f"Loaded {polars_df.shape[0]} rows from {schema}.{table_name}")
+                
+                return polars_df
+                
+        except Exception as e:
+            context.log.error(f"Failed to load data from {schema}.{table_name}: {str(e)}")
+            raise

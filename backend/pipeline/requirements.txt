@@ -11,5 +11,6 @@ langchain-core
 pyarrow>=11.0.0
 pydantic>=1.10.12
 python-dateutil>=2.8.2
+sqlalchemy>=2.0.12
 fuzzywuzzy
 python-Levenshtein
