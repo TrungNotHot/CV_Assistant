@@ -4,7 +4,7 @@ This project is a comprehensive CV (Curriculum Vitae) assistant tool that helps 
 
 ## Project Structure
 
-- **backend/** - Contains the data processing pipeline and backend services
+- **data_pipeline/** - Contains the data processing pipeline and backend services
     - Data processing
     - ETL pipeline
     - Database management
