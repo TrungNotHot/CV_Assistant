@@ -120,12 +120,48 @@ class JDParser():
         # Find JDs that haven't been parsed yet
         query = {'_id': {'$nin': parsed_ids}} if parsed_ids else {}
         
-        if limit:
-            unparsed_jds = list(jd_collection.find(query).limit(limit))
-        else:
-            unparsed_jds = list(jd_collection.find(query))
+        try:
+            # First, get just the IDs and metadata (not the full text which might be large)
+            projection = {
+                '_id': 1, 
+                'job_title': 1, 
+                'company_name': 1, 
+                'location': 1, 
+                'posted_date': 1, 
+                'url': 1
+            }
             
-        return unparsed_jds
+            if limit:
+                doc_ids = list(jd_collection.find(query, projection).limit(limit))
+            else:
+                doc_ids = list(jd_collection.find(query, projection))
+            
+            # Then fetch full documents one by one, skipping those that are too large
+            unparsed_jds = []
+            for doc in doc_ids:
+                try:
+                    # Try to get the full document including the full_text_jd field
+                    full_doc = jd_collection.find_one({'_id': doc['_id']})
+                    if full_doc:
+                        unparsed_jds.append(full_doc)
+                except Exception as e:
+                    # If document is too large, log and skip it
+                    if "BSON document too large" in str(e):
+                        logging.warning(f"Skipping document with ID {doc['_id']} because it's too large: {str(e)}")
+                        # Mark this document as "processed" even though we're skipping it
+                        # This prevents it from being attempted again in future batches
+                        doc_with_error = doc.copy()
+                        doc_with_error['error'] = f"Document too large to process: {str(e)}"
+                        doc_with_error['full_text_jd'] = "Document too large to process"
+                        unparsed_jds.append(doc_with_error)
+                    else:
+                        logging.error(f"Error fetching document {doc['_id']}: {str(e)}")
+                    
+            return unparsed_jds
+            
+        except Exception as e:
+            logging.error(f"Error fetching unparsed JDs: {str(e)}")
+            return []
     
     def save_parsed_jds_to_mongodb(self, original_jds: List[Dict], parsed_jds: List[Dict]) -> int:
         """Save parsed JDs to MongoDB using bulk operations for efficiency"""

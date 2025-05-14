@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 from dagster import Definitions
+from dagster import in_process_executor
 from langchain_google_genai import ChatGoogleGenerativeAI
 from .assets.parser_layer import parse_jds_to_mongodb
 from .assets.bronze_layer import bronze_job_descriptions
@@ -26,8 +27,7 @@ from .assets.warehouse_layer import (
     warehouse_job_major_mapping_table,
     warehouse_job_position_table
 )
-from dagster import ScheduleDefinition, AssetSelection, define_asset_job, job, op, JobDefinition
-
+from dagster import ScheduleDefinition, AssetSelection, define_asset_job
 from .resources.Parser import JDParser
 from .resources.ParserModel import JDParserModel
 from .resources.mongo_db_manager import MongoDBManager
@@ -70,50 +70,32 @@ parse_job = define_asset_job(
     selection=AssetSelection.assets(parse_jds_to_mongodb)
 )
 
-bronze_job = define_asset_job(
-    name="bronze_job",
-    selection=AssetSelection.assets(bronze_job_descriptions)
-)
-
-silver_norm_job = define_asset_job(
-    name="silver_norm_job",
+sequential_job_in_datalake = define_asset_job(
+    name="sequential_job_in_datalake",
     selection=AssetSelection.assets(
+        # Đặt theo đúng thứ tự muốn chạy
+        parse_jds_to_mongodb,
+        bronze_job_descriptions,
         normalize_location,
         normalize_major,
         normalize_soft_skills,
         normalize_tech_stack,
         normalize_job_position,
-    )
-)
-silver_final_job = define_asset_job(
-    name="silver_final_job",
-    selection=AssetSelection.assets(silver_job_descriptions)
-)
-
-# Define gold layer jobs
-gold_dimension_tables_job = define_asset_job(
-    name="gold_dimension_tables_job",
-    selection=AssetSelection.assets(
+        silver_job_descriptions,
         gold_job_position_table,
         gold_tech_skill_table,
         gold_soft_skill_table,
         gold_major_table,
-    )
-)
-
-gold_mapping_tables_job = define_asset_job(
-    name="gold_mapping_tables_job",
-    selection=AssetSelection.assets(
         gold_job_description_table,
         gold_job_tech_skill_mapping,
         gold_job_soft_skill_mapping,
-        gold_job_major_mapping
-    )
+        gold_job_major_mapping,
+    ),
+    executor_def=in_process_executor
 )
 
-# Define warehouse layer job
-warehouse_layer_job = define_asset_job(
-    name="warehouse_layer_job",
+load_to_warehouse_job = define_asset_job(
+    name="load_to_warehouse_job",
     selection=AssetSelection.assets(
         warehouse_job_description_table,
         warehouse_tech_skill_table,
@@ -123,57 +105,31 @@ warehouse_layer_job = define_asset_job(
         warehouse_major_table,
         warehouse_job_major_mapping_table,
         warehouse_job_position_table
-    )
+    ),
+    executor_def=in_process_executor
 )
 
 # Define schedules
 parse_schedule = ScheduleDefinition(
     job=parse_job,
-    cron_schedule="0 0 * * 0",  # Run once a week on Sunday at midnight
+    cron_schedule="0 0 * * 6",  # Run once a week on Saturday at midnight
     execution_timezone="UTC",
 )
 
-bronze_schedule = ScheduleDefinition(
-    job=bronze_job,
-    cron_schedule="0 0 */2 * *",   # Run every 2 days at midnight
-    execution_timezone="UTC",
+in_datalake_schedule = ScheduleDefinition(
+    job=sequential_job_in_datalake,
+    cron_schedule="0 0 * * 0",  # Run once a week on Sunday at midnight 
 )
 
-silver_norm_schedule = ScheduleDefinition(
-    job=silver_norm_job,
-    cron_schedule="0 0 */2 * *",   # Run every 2 days at midnight
-    execution_timezone="UTC",
-)
-
-silver_schedule = ScheduleDefinition(
-    job=silver_final_job,
-    cron_schedule="0 0 */2 * *",   # Run every 2 days at midnight
-    execution_timezone="UTC",
-)
-
-# Define gold schedules
-gold_dimension_schedule = ScheduleDefinition(
-    job=gold_dimension_tables_job,
-    cron_schedule="0 1 */2 * *",   # Run every 2 days at 1 AM (after silver)
-    execution_timezone="UTC",
-)
-
-gold_mapping_schedule = ScheduleDefinition(
-    job=gold_mapping_tables_job,
-    cron_schedule="0 2 */2 * *",   # Run every 2 days at 2 AM (after dimensions)
-    execution_timezone="UTC",
-)
-
-# Define warehouse schedule
 warehouse_schedule = ScheduleDefinition(
-    job=warehouse_layer_job,
-    cron_schedule="0 3 */2 * *",   # Run every 2 days at 3 AM (after gold layer)
-    execution_timezone="UTC",
+    job=load_to_warehouse_job,
+    cron_schedule="0 0 * * 1",  # Run once a week on Monday at midnight
 )
 
 # Define the defs object at the module level - this is what Dagster looks for
 defs = Definitions(
     assets=[
+            # Parser layer assets
             parse_jds_to_mongodb,
             # Bronze layer assets
             bronze_job_descriptions,
@@ -224,11 +180,7 @@ defs = Definitions(
     },
     schedules=[
         parse_schedule, 
-        bronze_schedule, 
-        silver_norm_schedule, 
-        silver_schedule,
-        gold_dimension_schedule,
-        gold_mapping_schedule,
-        warehouse_schedule,
+        in_datalake_schedule,
+        warehouse_schedule
     ],
 )
